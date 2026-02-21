@@ -118,7 +118,8 @@ app.whenReady().then(async () => {
 
         // 啟動監測
         monitorService.start();
-        monitorService.startHeartbeat(); // [v2026.1 新增] 啟動心跳
+        // [v2026.02 移除] 停止心跳回報以減輕 GAS 後端負擔
+        // monitorService.startHeartbeat(); 
 
         console.log('[Main] 基礎服務啟動完成');
 

@@ -592,7 +592,8 @@ class MonitorService {
         console.log(`[Monitor] 休閒警示閾值已設為 ${minutes} 分鐘`);
     }
 
-    // [v2026.1 新增] 啟動心跳回報
+    // [v2026.02 移除] 根據使用者需求停止心跳回報
+    /*
     startHeartbeat() {
         if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
 
@@ -620,6 +621,7 @@ class MonitorService {
             }
         }
     }
+    */
 }
 
 module.exports = { MonitorService };
