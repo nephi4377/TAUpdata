@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { app } = require('electron');
 const log = require('electron-log');
+const Module = require('module');
 
 class HotReloader {
     get userDataPath() {
@@ -13,30 +14,43 @@ class HotReloader {
     }
 
     /**
-     * 安全載入模組 (具備熔斷機制)
+     * 安全載入模組 (具備熔斷機制與原生路徑模擬)
      * @param {string} moduleName - 模組名稱，例如 'monitor' 
      * @param {string} localPath - 備用本地原路徑，相對於 client 目錄，例如 './src/monitor'
      */
     loadModuleSafely(moduleName, localPath) {
+        const absoluteLocalPath = path.resolve(__dirname, '..', localPath);
         const patchFilePath = path.join(this.patchDirPath, 'src', `${moduleName}.js`);
+
+        const loadOriginal = () => {
+            const resolvedLocalPath = require.resolve(absoluteLocalPath);
+            if (require.cache[resolvedLocalPath]) {
+                delete require.cache[resolvedLocalPath];
+            }
+            return require(absoluteLocalPath);
+        };
 
         // 檢查是否有補丁檔存在
         if (fs.existsSync(patchFilePath)) {
             try {
-                // 清除快取以強制重新讀取
-                const resolvedPatchPath = require.resolve(patchFilePath);
-                if (require.cache[resolvedPatchPath]) {
-                    delete require.cache[resolvedPatchPath];
-                }
-
                 log.info(`[HotReloader] 找到 ${moduleName} 補丁，嘗試加載...`);
-                // 嘗試引入補丁 (此處即為沙盒測試，若語法錯誤會直接扔出 Exception)
-                const module = require(patchFilePath);
+
+                // 讀取補丁代碼
+                const content = fs.readFileSync(patchFilePath, 'utf8');
+
+                // 創建一個新的 node module 實例，繼承目前環境，並賦予其等同於「廠房代碼」的偽裝路徑
+                const m = new Module(absoluteLocalPath, module);
+                m.filename = absoluteLocalPath;
+                m.paths = Module._nodeModulePaths(path.dirname(absoluteLocalPath));
+
+                // 進行編譯與沙盒執行
+                m._compile(content, absoluteLocalPath);
+
                 log.info(`[HotReloader] ${moduleName} 補丁加載成功`);
-                return module;
+                return m.exports;
             } catch (err) {
                 // 補丁故障，觸發熔斷
-                log.error(`[HotReloader] 補丁故障，觸發熔斷回退 (${moduleName}):`, err.message);
+                log.error(`[HotReloader] 補丁故障，觸發熔斷回退 (${moduleName}):`, err.message, err.stack);
 
                 // 標記該補丁為損壞 (改名或者移除，避免下次繼續報錯)
                 try {
@@ -49,17 +63,8 @@ class HotReloader {
             }
         }
 
-        // 若無補丁或補丁熔斷，則加載內建原本的模組
-        // 清除原始模組快取，確保重新加載
-        // localPath 是相對於 main.js 的例如 './src/monitor'
-        // 而此檔案位於 ./src/hotReloader.js，所以需回到上一層
-        const absoluteLocalPath = path.resolve(__dirname, '..', localPath);
-        const resolvedLocalPath = require.resolve(absoluteLocalPath);
-        if (require.cache[resolvedLocalPath]) {
-            delete require.cache[resolvedLocalPath];
-        }
-
-        return require(absoluteLocalPath);
+        // 若無補丁或補丁熔斷崩潰，則加載內建原本的模組 (原廠安全代碼)
+        return loadOriginal();
     }
 }
 
