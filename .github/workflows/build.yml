@@ -34,5 +34,5 @@ jobs:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
           $VERSION = node -p "require('./package.json').version"
-          Compress-Archive -Path src -DestinationPath patch-v${VERSION}.zip
-          gh release upload v$VERSION patch-v${VERSION}.zip
+          Compress-Archive -Path src -DestinationPath patch-v${VERSION}.zip -Force
+          gh release upload v$VERSION patch-v${VERSION}.zip --clobber
