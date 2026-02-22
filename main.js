@@ -12,17 +12,21 @@ const log = require('electron-log');
 log.transports.file.level = 'info';
 autoUpdater.logger = log;
 
-// 引入模組
-const { MonitorService } = require('./src/monitor');
-const { TrayManager } = require('./src/tray');
-const { StorageService } = require('./src/storage');
-const { ClassifierService } = require('./src/classifier');
-const { ConfigManager } = require('./src/config');
-const { CheckinService } = require('./src/checkinService');
-const { SetupWindow } = require('./src/setupWindow');
-const { ReminderService } = require('./src/reminderService');
-const { ClassificationWindow } = require('./src/classificationWindow');
-const { AdminDashboard } = require('./src/adminDashboard'); // [v2026.1 新增]
+// 引入熱加載模組與更新器
+const { hotReloader } = require('./src/hotReloader');
+const { patchUpdater } = require('./src/updater');
+
+// 安全載入模組 (免重啟熱抽換)
+const MonitorService = hotReloader.loadModuleSafely('monitor', './src/monitor').MonitorService;
+const TrayManager = hotReloader.loadModuleSafely('tray', './src/tray').TrayManager;
+const StorageService = hotReloader.loadModuleSafely('storage', './src/storage').StorageService;
+const ClassifierService = hotReloader.loadModuleSafely('classifier', './src/classifier').ClassifierService;
+const ConfigManager = hotReloader.loadModuleSafely('config', './src/config').ConfigManager;
+const CheckinService = hotReloader.loadModuleSafely('checkinService', './src/checkinService').CheckinService;
+const SetupWindow = hotReloader.loadModuleSafely('setupWindow', './src/setupWindow').SetupWindow;
+const ReminderService = hotReloader.loadModuleSafely('reminderService', './src/reminderService').ReminderService;
+const ClassificationWindow = hotReloader.loadModuleSafely('classificationWindow', './src/classificationWindow').ClassificationWindow;
+const AdminDashboard = hotReloader.loadModuleSafely('adminDashboard', './src/adminDashboard').AdminDashboard;
 
 // 全域變數
 let mainWindow = null;
@@ -79,7 +83,7 @@ app.whenReady().then(async () => {
 
         // 檢查更新
         if (app.isPackaged) {
-            autoUpdater.checkForUpdatesAndNotify();
+            patchUpdater.checkForUpdates(false);
         }
 
         // 初始化設定管理
@@ -175,10 +179,10 @@ function setupAutoUpdater() {
     });
 
     // 支援手動檢查更新
-    app.on('check-for-updates-manual', () => {
+    app.on('check-for-updates-manual', async () => {
         if (app.isPackaged) {
             isManualCheck = true;
-            autoUpdater.checkForUpdates();
+            await patchUpdater.checkForUpdates(true);
         } else {
             dialog.showMessageBox({
                 type: 'info',
@@ -189,13 +193,23 @@ function setupAutoUpdater() {
         }
     });
 
-    // [v1.3.2] 每 15 分鐘 (0.25 小時) 背景自動檢查一次
+    // [v1.7] 每 15 分鐘 (0.25 小時) 背景自動檢查補丁一次
     setInterval(() => {
         if (app.isPackaged) {
             log.info('[Updater] 執行定時計劃更新檢查...');
-            autoUpdater.checkForUpdates();
+            patchUpdater.checkForUpdates(false);
         }
     }, 15 * 60 * 1000);
+
+    // 監聽補丁下載完成
+    app.on('patch-downloaded', async () => {
+        log.info('[Main] 接收到補丁更新，執行軟重啟...');
+        try {
+            await restartAppServices();
+        } catch (e) {
+            log.error('[Main] 軟重啟失敗:', e);
+        }
+    });
 }
 
 // 初始化更新器
@@ -250,6 +264,78 @@ async function initializeCheckinIntegration() {
 function handleWorkInfoUpdate(workInfo) {
     if (!workInfo) return;
     configManager.updateWorkInfo(workInfo);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 免重啟軟重啟機制 (Soft Restart)
+// ═══════════════════════════════════════════════════════════════
+async function restartAppServices() {
+    console.log('[Main] 開始進行軟重啟 (Soft Restart)...');
+
+    // 1. 停止並保存當前狀態
+    if (monitorService) monitorService.stop();
+    if (reminderService) reminderService.stop();
+    if (storageService) await storageService.close(); // 釋放 SQLite
+
+    // 2. 銷毀當前視窗與 Tray
+    if (setupWindow && setupWindow.window) setupWindow.window.destroy();
+    if (classificationWindow && classificationWindow.window) classificationWindow.window.destroy();
+    if (adminDashboard && adminDashboard.window) adminDashboard.window.destroy();
+
+    // 清除 Tray 避免重疊
+    if (trayManager && trayManager.tray) {
+        trayManager.tray.destroy();
+        trayManager.tray = null;
+    }
+
+    console.log('[Main] 原服務已銷毀，準備重新載入模組...');
+
+    // 3. 從 hotReloader 動態載入新版模組
+    const NewMonitorService = hotReloader.loadModuleSafely('monitor', './src/monitor').MonitorService;
+    const NewTrayManager = hotReloader.loadModuleSafely('tray', './src/tray').TrayManager;
+    const NewStorageService = hotReloader.loadModuleSafely('storage', './src/storage').StorageService;
+    const NewClassifierService = hotReloader.loadModuleSafely('classifier', './src/classifier').ClassifierService;
+    const NewConfigManager = hotReloader.loadModuleSafely('config', './src/config').ConfigManager;
+    const NewCheckinService = hotReloader.loadModuleSafely('checkinService', './src/checkinService').CheckinService;
+    const NewSetupWindow = hotReloader.loadModuleSafely('setupWindow', './src/setupWindow').SetupWindow;
+    const NewReminderService = hotReloader.loadModuleSafely('reminderService', './src/reminderService').ReminderService;
+    const NewClassificationWindow = hotReloader.loadModuleSafely('classificationWindow', './src/classificationWindow').ClassificationWindow;
+    const NewAdminDashboard = hotReloader.loadModuleSafely('adminDashboard', './src/adminDashboard').AdminDashboard;
+
+    // 4. 重建實例
+    configManager = new NewConfigManager();
+    await configManager.init();
+
+    storageService = new NewStorageService();
+    await storageService.init();
+
+    classifierService = new NewClassifierService(configManager);
+    checkinService = new NewCheckinService(configManager);
+    monitorService = new NewMonitorService(storageService, classifierService, checkinService);
+
+    setupWindow = new NewSetupWindow(configManager, checkinService);
+    classificationWindow = new NewClassificationWindow(classifierService);
+
+    reminderService = new NewReminderService(configManager, monitorService);
+    reminderService.start();
+
+    adminDashboard = new NewAdminDashboard(configManager, checkinService);
+
+    trayManager = new NewTrayManager(app, monitorService, storageService, configManager, checkinService, setupWindow, reminderService, classificationWindow, adminDashboard);
+    await trayManager.init();
+
+    monitorService.start();
+
+    // 重新整合 CheckinSystem
+    await initializeCheckinIntegration();
+
+    console.log('[Main] 軟重啟完成，已無感套用新補丁！');
+    dialog.showMessageBox({
+        type: 'info',
+        title: '熱更新完成',
+        message: '增量補丁已加載套用成功！介面已自動刷新。',
+        buttons: ['確定']
+    });
 }
 
 // 啟動定時排程任務

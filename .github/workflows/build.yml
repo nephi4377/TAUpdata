@@ -28,3 +28,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: npm run build -- --publish always
+
+      - name: Create and Upload Patch Zip
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          $VERSION = node -p "require('./package.json').version"
+          Compress-Archive -Path src -DestinationPath patch-v${VERSION}.zip
+          gh release upload v$VERSION patch-v${VERSION}.zip
