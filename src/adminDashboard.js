@@ -258,23 +258,25 @@ class AdminDashboard {
                 if (r.anomalies?.includes('low_score')) tags += '<span class="tag tag-danger">低生產力</span>';
                 if (r.anomalies?.includes('high_leisure')) tags += '<span class="tag tag-warning">高休閒</span>';
                 const isSelected = selectedKey === i;
-                const det = (r.detailText || '').replace(/\\n/g, '\\n').replace(/\\r/g, '').replace(/\`/g, '\\`');
+                
+                // [v1.7 FIX] 改用 encodeURIComponent 處理跳脫問題，避免 inline onClick 字串解析錯誤
+                const cleanDet = encodeURIComponent(r.detailText || '');
 
-        let rowHtml = '<tr data-name="' + r.userName + '" class="' + (isSelected ? 'selected' : '') + ' ' + (r.anomalies?.length ? 'anomaly-row' : '') + '" onclick="focusRow(' + i + ')">';
-        rowHtml += '<td>' + r.date + '</td>';
-        rowHtml += '<td style="font-weight:600">' + r.userName + '</td>';
-        rowHtml += '<td>' + r.work + '</td>';
-        rowHtml += '<td>' + r.leisure + '</td>';
-        rowHtml += '<td class="' + (r.productivity < 60 ? 'text-danger' : 'text-success') + '">' + r.productivity + '%</td>';
-        rowHtml += '<td><div class="scrollbar" style="max-height:45px; overflow-y:auto; font-size:12px; cursor:zoom-in" onclick="event.stopPropagation(); showDetailModal(\'' + r.date + '\', \'' + r.userName + '\', \\`' + det + '\\`)">';
-        rowHtml += (r.detailText ? r.detailText.substring(0, 45) + '...' : '點擊放大內容');
-        rowHtml += '</div></td>';
-        rowHtml += '<td>' + (tags || '-') + '</td>';
-        rowHtml += '</tr>';
-        return rowHtml;
-    }).join('');
-    filterHistoryTable();
-}
+                let rowHtml = '<tr data-name="' + r.userName + '" class="' + (isSelected ? 'selected' : '') + ' ' + (r.anomalies?.length ? 'anomaly-row' : '') + '" onclick="focusRow(' + i + ')">';
+                rowHtml += '<td>' + r.date + '</td>';
+                rowHtml += '<td style="font-weight:600">' + r.userName + '</td>';
+                rowHtml += '<td>' + r.work + '</td>';
+                rowHtml += '<td>' + r.leisure + '</td>';
+                rowHtml += '<td class="' + (r.productivity < 60 ? 'text-danger' : 'text-success') + '">' + r.productivity + '%</td>';
+                rowHtml += '<td><div class="scrollbar" style="max-height:45px; overflow-y:auto; font-size:12px; cursor:zoom-in" onclick="event.stopPropagation(); showDetailModal(\'' + r.date + '\', \'' + r.userName + '\', decodeURIComponent(\'' + cleanDet + '\'))">';
+                rowHtml += (r.detailText ? r.detailText.substring(0, 45).replace(/</g, "&lt;").replace(/>/g, "&gt;") + '...' : '點擊放大內容');
+                rowHtml += '</div></td>';
+                rowHtml += '<td>' + (tags || '-') + '</td>';
+                rowHtml += '</tr>';
+                return rowHtml;
+            }).join('');
+            filterHistoryTable();
+        }
 
 function filterHistoryTable() {
     const q = document.getElementById('history-filter').value.toLowerCase();
@@ -316,7 +318,7 @@ function closeModal() { document.getElementById('modal-overlay').style.display =
 </body >
 </html >
     `;
-        this.window.loadURL(`data: text / html; charset = utf - 8, ${ encodeURIComponent(htmlContent) } `);
+        this.window.loadURL(`data: text / html; charset = utf - 8, ${encodeURIComponent(htmlContent)} `);
     }
 
     _stopAutoUpdate() { }
