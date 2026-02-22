@@ -264,70 +264,67 @@ class AdminDashboard {
                 if (r.anomalies?.includes('low_score')) tags += '<span class="tag tag-danger">低生產力</span>';
                 if (r.anomalies?.includes('high_leisure')) tags += '<span class="tag tag-warning">高休閒</span>';
                 const isSelected = selectedKey === i;
-                const det = (r.detailText || '').replace(/\n/g, '\\n').replace(/\r/g, ''); 
-                return `
-            < tr data-name="${r.userName}" class="${isSelected ? 'selected' : ''} ${r.anomalies?.length ? 'anomaly-row' : ''}" onclick = "focusRow(${i})" >
-                        <td>${r.date}</td>
-                        <td style="font-weight:600">${r.userName}</td>
-                        <td>${r.work}</td>
-                        <td>${r.leisure}</td>
-                        <td class="${r.productivity < 60 ? 'text-danger' : 'text-success'}">${r.productivity}%</td>
-                        <td>
-                            <div class="scrollbar" style="max-height:45px; overflow-y:auto; font-size:12px; cursor:zoom-in" 
-                                onclick="event.stopPropagation(); showDetailModal('${r.date}', '${r.userName}', \`${det}\`)">
-                                ${r.detailText ? r.detailText.substring(0, 45) + '...' : '點擊放大內容'}
-                            </div>
-                        </td>
-                        <td>${tags || '-'}</td>
-                    </tr >
-            `;
-            }).join('');
-            filterHistoryTable();
-        }
+                const det = (r.detailText || '').replace(/\n/g, '\\n').replace(/\r/g, '').replace(new RegExp('\\x60', 'g'), '\\\\`'); 
 
-        function filterHistoryTable() {
-            const q = document.getElementById('history-filter').value.toLowerCase();
-            document.querySelectorAll('#history-body tr').forEach(r => {
-                r.style.display = r.getAttribute('data-name').toLowerCase().includes(q) ? '' : 'none';
-            });
-        }
+        let html = '<tr data-name="' + r.userName + '" class="' + (isSelected ? 'selected' : '') + ' ' + (r.anomalies?.length ? 'anomaly-row' : '') + '" onclick="focusRow(' + i + ')">';
+        html += '<td>' + r.date + '</td>';
+        html += '<td style="font-weight:600">' + r.userName + '</td>';
+        html += '<td>' + r.work + '</td>';
+        html += '<td>' + r.leisure + '</td>';
+        html += '<td class="' + (r.productivity < 60 ? 'text-danger' : 'text-success') + '">' + r.productivity + '%</td>';
+        html += '<td><div class="scrollbar" style="max-height:45px; overflow-y:auto; font-size:12px; cursor:zoom-in" onclick="event.stopPropagation(); showDetailModal(\'' + r.date + '\', \'' + r.userName + '\', \\x60' + det + '\\x60)">';
+        html += (r.detailText ? r.detailText.substring(0, 45) + '...' : '點擊放大內容');
+        html += '</div></td>';
+        html += '<td>' + (tags || '-') + '</td>';
+        html += '</tr>';
+        return html;
+    }).join('');
+    filterHistoryTable();
+}
 
-        function renderCharts(catStats, daily) {
-            if (charts.pie) charts.pie.destroy(); 
-            if (charts.bar) charts.bar.destroy();
-            
-            charts.pie = new Chart(document.getElementById('chart-pie'), {
-                type: 'doughnut',
-                data: {
-                    labels: ['工作', '閒置', '休閒', '其他'],
-                    datasets: [{ data: [catStats.work, catStats.idle, catStats.leisure, catStats.other], backgroundColor: ['#52c41a', '#faad14', '#ff4d4f', '#8c8c8c'] }]
-                },
-                options: { maintainAspectRatio: false, plugins: { title: { display: true, text: '產能占比比例分析' } } }
-            });
+function filterHistoryTable() {
+    const q = document.getElementById('history-filter').value.toLowerCase();
+    document.querySelectorAll('#history-body tr').forEach(r => {
+        r.style.display = r.getAttribute('data-name').toLowerCase().includes(q) ? '' : 'none';
+    });
+}
 
-            charts.bar = new Chart(document.getElementById('chart-bar'), {
-                type: 'bar',
-                data: {
-                    labels: daily.map(x => x.date.split('-').slice(1).join('/')),
-                    datasets: [{ label: '工作時間', data: daily.map(x => x.work), backgroundColor: '#52c41a' }, { label: '閒置時間', data: daily.map(x => x.idle), backgroundColor: '#faad14' }]
-                },
-                options: { maintainAspectRatio: false, scales: { x: { stacked: true }, y: { stacked: true } }, plugins: { title: { display: true, text: '每日產能趨勢 (分)' } } }
-            });
-        }
+function renderCharts(catStats, daily) {
+    if (charts.pie) charts.pie.destroy();
+    if (charts.bar) charts.bar.destroy();
 
-        function showDetailModal(date, name, content) {
-            document.getElementById('modal-title').innerText = name + ' - ' + date + ' 工作日誌詳情';
-            document.getElementById('modal-content').innerText = content; 
-            document.getElementById('modal-overlay').style.display = 'flex';
-        }
+    charts.pie = new Chart(document.getElementById('chart-pie'), {
+        type: 'doughnut',
+        data: {
+            labels: ['工作', '閒置', '休閒', '其他'],
+            datasets: [{ data: [catStats.work, catStats.idle, catStats.leisure, catStats.other], backgroundColor: ['#52c41a', '#faad14', '#ff4d4f', '#8c8c8c'] }]
+        },
+        options: { maintainAspectRatio: false, plugins: { title: { display: true, text: '產能占比比例分析' } } }
+    });
 
-        function closeModal() { document.getElementById('modal-overlay').style.display = 'none'; }
-    </script>
-</body>
-</html>
-`;
+    charts.bar = new Chart(document.getElementById('chart-bar'), {
+        type: 'bar',
+        data: {
+            labels: daily.map(x => x.date.split('-').slice(1).join('/')),
+            datasets: [{ label: '工作時間', data: daily.map(x => x.work), backgroundColor: '#52c41a' }, { label: '閒置時間', data: daily.map(x => x.idle), backgroundColor: '#faad14' }]
+        },
+        options: { maintainAspectRatio: false, scales: { x: { stacked: true }, y: { stacked: true } }, plugins: { title: { display: true, text: '每日產能趨勢 (分)' } } }
+    });
+}
 
-        this.window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+function showDetailModal(date, name, content) {
+    document.getElementById('modal-title').innerText = name + ' - ' + date + ' 工作日誌詳情';
+    document.getElementById('modal-content').innerText = content;
+    document.getElementById('modal-overlay').style.display = 'flex';
+}
+
+function closeModal() { document.getElementById('modal-overlay').style.display = 'none'; }
+    </script >
+</body >
+</html >
+    `;
+
+        this.window.loadURL(`data: text / html; charset = utf - 8, ${ encodeURIComponent(html) } `);
     }
 
     _stopAutoUpdate() { }
