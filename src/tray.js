@@ -106,7 +106,7 @@ class TrayManager {
     const productivityRate = stats.productivityRate || 0;
 
     const template = [
-      { label: `添心生產力助手 v${this.app.getVersion()} (${statusLabel})`, enabled: false },
+      { label: `添心生產力助手 v${this.app.getVersion()} [熱更新 v1.7.4] (${statusLabel})`, enabled: false },
       { label: `今日工作: ${this.formatMinutes(stats.work)} (${productivityRate}%)`, enabled: false },
       {
         label: '📊 詳細統計 (歷史)',

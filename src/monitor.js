@@ -4,10 +4,6 @@
 const { Notification, dialog, powerMonitor, BrowserWindow, screen } = require('electron');
 
 // 動態載入 active-win（ESM 模組）
-
-// 🔴 [TEST PATCH] v1.7.3 測試用：這行會引發 Syntax Error 或直接報錯，用來測試 hotReloader 的防崩潰熔斷機制！
-throw new Error("💥 這是一個用來說明防崩潰熱重啟機制的故意報錯！如果熔斷成功，且 node_modules 修正奏效，這個錯誤會被攔截，系統會安然無恙。");
-
 let activeWin = null;
 
 class MonitorService {
