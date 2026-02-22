@@ -48,7 +48,7 @@ class AdminDashboard {
     }
 
     _loadUI() {
-        const html = `
+        const htmlContent = `
 <!DOCTYPE html>
 <html>
 <head>
@@ -110,7 +110,7 @@ class AdminDashboard {
 <body>
     <div id="login-overlay">
         <div class="login-box">
-            <div style="font-size: 40px; mb: 12px;">🛡️</div>
+            <div style="font-size: 40px; margin-bottom: 12px;">🛡️</div>
             <h3>管理員登入</h3>
             <input type="password" id="password-input" placeholder="••••••••" onkeyup="if(event.key==='Enter') verifyPassword()">
             <button onclick="verifyPassword()">安全登入</button>
@@ -118,7 +118,6 @@ class AdminDashboard {
         </div>
     </div>
 
-    <!-- Detail Modal -->
     <div id="modal-overlay" onclick="closeModal()">
         <div class="modal-box" onclick="event.stopPropagation()">
             <div class="modal-header">
@@ -224,13 +223,9 @@ class AdminDashboard {
             if (!rawData) return;
             const row = rawData.daily[idx];
             selectedKey = idx;
-            
-            // 更新表格選取樣式
             document.querySelectorAll('#history-body tr').forEach((r, i) => {
                 r.classList.toggle('selected', i === idx);
             });
-            
-            // 圖表與數字切換為「單日/單人」聚焦數據 (Zoom in)
             const focusedSummary = {
                 totalWork: row.work,
                 totalIdle: row.idle,
@@ -252,7 +247,6 @@ class AdminDashboard {
             document.getElementById('val-idle').innerText = Math.round(summary.totalIdle);
             document.getElementById('val-prod').innerText = summary.avgProductivity + '%';
             document.getElementById('val-count').innerText = summary.records;
-            
             renderCharts(catStats, daily);
             if (!isFocused) renderHistoryTable(daily);
         }
@@ -264,20 +258,20 @@ class AdminDashboard {
                 if (r.anomalies?.includes('low_score')) tags += '<span class="tag tag-danger">低生產力</span>';
                 if (r.anomalies?.includes('high_leisure')) tags += '<span class="tag tag-warning">高休閒</span>';
                 const isSelected = selectedKey === i;
-                const det = (r.detailText || '').replace(/\n/g, '\\n').replace(/\r/g, '').replace(new RegExp('\\x60', 'g'), '\\\\`'); 
+                const det = (r.detailText || '').replace(/\\n/g, '\\n').replace(/\\r/g, '').replace(/\`/g, '\\`');
 
-        let html = '<tr data-name="' + r.userName + '" class="' + (isSelected ? 'selected' : '') + ' ' + (r.anomalies?.length ? 'anomaly-row' : '') + '" onclick="focusRow(' + i + ')">';
-        html += '<td>' + r.date + '</td>';
-        html += '<td style="font-weight:600">' + r.userName + '</td>';
-        html += '<td>' + r.work + '</td>';
-        html += '<td>' + r.leisure + '</td>';
-        html += '<td class="' + (r.productivity < 60 ? 'text-danger' : 'text-success') + '">' + r.productivity + '%</td>';
-        html += '<td><div class="scrollbar" style="max-height:45px; overflow-y:auto; font-size:12px; cursor:zoom-in" onclick="event.stopPropagation(); showDetailModal(\'' + r.date + '\', \'' + r.userName + '\', \\x60' + det + '\\x60)">';
-        html += (r.detailText ? r.detailText.substring(0, 45) + '...' : '點擊放大內容');
-        html += '</div></td>';
-        html += '<td>' + (tags || '-') + '</td>';
-        html += '</tr>';
-        return html;
+        let rowHtml = '<tr data-name="' + r.userName + '" class="' + (isSelected ? 'selected' : '') + ' ' + (r.anomalies?.length ? 'anomaly-row' : '') + '" onclick="focusRow(' + i + ')">';
+        rowHtml += '<td>' + r.date + '</td>';
+        rowHtml += '<td style="font-weight:600">' + r.userName + '</td>';
+        rowHtml += '<td>' + r.work + '</td>';
+        rowHtml += '<td>' + r.leisure + '</td>';
+        rowHtml += '<td class="' + (r.productivity < 60 ? 'text-danger' : 'text-success') + '">' + r.productivity + '%</td>';
+        rowHtml += '<td><div class="scrollbar" style="max-height:45px; overflow-y:auto; font-size:12px; cursor:zoom-in" onclick="event.stopPropagation(); showDetailModal(\'' + r.date + '\', \'' + r.userName + '\', \\`' + det + '\\`)">';
+        rowHtml += (r.detailText ? r.detailText.substring(0, 45) + '...' : '點擊放大內容');
+        rowHtml += '</div></td>';
+        rowHtml += '<td>' + (tags || '-') + '</td>';
+        rowHtml += '</tr>';
+        return rowHtml;
     }).join('');
     filterHistoryTable();
 }
@@ -285,14 +279,14 @@ class AdminDashboard {
 function filterHistoryTable() {
     const q = document.getElementById('history-filter').value.toLowerCase();
     document.querySelectorAll('#history-body tr').forEach(r => {
-        r.style.display = r.getAttribute('data-name').toLowerCase().includes(q) ? '' : 'none';
+        const name = r.getAttribute('data-name') || '';
+        r.style.display = name.toLowerCase().includes(q) ? '' : 'none';
     });
 }
 
 function renderCharts(catStats, daily) {
     if (charts.pie) charts.pie.destroy();
     if (charts.bar) charts.bar.destroy();
-
     charts.pie = new Chart(document.getElementById('chart-pie'), {
         type: 'doughnut',
         data: {
@@ -301,7 +295,6 @@ function renderCharts(catStats, daily) {
         },
         options: { maintainAspectRatio: false, plugins: { title: { display: true, text: '產能占比比例分析' } } }
     });
-
     charts.bar = new Chart(document.getElementById('chart-bar'), {
         type: 'bar',
         data: {
@@ -323,8 +316,7 @@ function closeModal() { document.getElementById('modal-overlay').style.display =
 </body >
 </html >
     `;
-
-        this.window.loadURL(`data: text / html; charset = utf - 8, ${ encodeURIComponent(html) } `);
+        this.window.loadURL(`data: text / html; charset = utf - 8, ${ encodeURIComponent(htmlContent) } `);
     }
 
     _stopAutoUpdate() { }
