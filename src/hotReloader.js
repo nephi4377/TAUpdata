@@ -4,10 +4,12 @@ const { app } = require('electron');
 const log = require('electron-log');
 
 class HotReloader {
-    constructor() {
-        // 開發環境與打包環境的 userData 目錄一致
-        this.userDataPath = app.getPath('userData');
-        this.patchDirPath = path.join(this.userDataPath, 'app_patches');
+    get userDataPath() {
+        return app.getPath('userData');
+    }
+
+    get patchDirPath() {
+        return path.join(this.userDataPath, 'app_patches');
     }
 
     /**
@@ -49,12 +51,15 @@ class HotReloader {
 
         // 若無補丁或補丁熔斷，則加載內建原本的模組
         // 清除原始模組快取，確保重新加載
-        const resolvedLocalPath = require.resolve(localPath);
+        // localPath 是相對於 main.js 的例如 './src/monitor'
+        // 而此檔案位於 ./src/hotReloader.js，所以需回到上一層
+        const absoluteLocalPath = path.resolve(__dirname, '..', localPath);
+        const resolvedLocalPath = require.resolve(absoluteLocalPath);
         if (require.cache[resolvedLocalPath]) {
             delete require.cache[resolvedLocalPath];
         }
 
-        return require(localPath);
+        return require(absoluteLocalPath);
     }
 }
 
