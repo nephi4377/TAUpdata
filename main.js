@@ -169,18 +169,9 @@ function setupAutoUpdater() {
     });
 
     autoUpdater.on('update-downloaded', (info) => {
-        log.info('[Updater] 更新下載完成');
-        dialog.showMessageBox({
-            type: 'question',
-            title: '更新準備就緒',
-            message: `新版本 v${info.version} 已下載完成。為了套用更新，建議立即重啟程式。\n\n是否現在更新？`,
-            buttons: ['立即重啟並安裝', '下次啟動時再說'],
-            defaultId: 0
-        }).then((result) => {
-            if (result.response === 0) {
-                autoUpdater.quitAndInstall();
-            }
-        });
+        log.info(`[Updater] v${info.version} 已靜默下載完成，將在程式重啟後套用`);
+        // 不再跳出 dialog 彈窗，避免干擾使用者。
+        // electron-updater 預設會在 quit 時安裝下載好的更新。
     });
 
     // 支援手動檢查更新
