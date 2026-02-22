@@ -335,6 +335,12 @@ class TrayManager {
 
   // 顯示詳細統計視窗
   async showStatsWindow() {
+    // [v1.7] 開啟視窗時主動同步一次後端打卡資訊
+    if (this.checkinService) {
+      console.log('[Tray] 開啟統計視窗，同步打卡資訊...');
+      this.checkinService.refreshWorkInfo().catch(err => console.error(err));
+    }
+
     // 確保使用 fs 和 path (已在最上方引入)
     const tempPath = path.join(this.app.getPath('userData'), 'stats.html');
 
@@ -782,12 +788,14 @@ class TrayManager {
           console.error('完成提醒失敗:', err);
           alert('操作失敗，請稍後再試');
         }
-      } else {
-        console.error('API not available');
       }
-    }
-  </script>
-</head>
+
+      // [v1.7] 自動定期重新整理
+      setInterval(() => {
+        window.reminderAPI.refreshStats();
+      }, 60 * 1000); // 每分鐘請求一次刷新 (主進程會寫入新 HTML 並 reload)
+    </script>
+  </head>
 <body>
   <div class="container">
     <h1>📊 今日生產力報告</h1>

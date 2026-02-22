@@ -121,7 +121,7 @@ class StorageService {
         }
         this.saveTimeout = setTimeout(() => {
             this.saveToFile();
-        }, 60 * 1000); // 60 秒後儲存 (避免頻繁寫入)
+        }, 15 * 1000); // 15 秒後儲存 (減少數據損失風險)
     }
 
     // 儲存資料庫到檔案
@@ -241,6 +241,42 @@ class StorageService {
             : 0;
 
         return stats;
+    }
+
+    // [v1.6] 取得今日累計秒數 (用於重啟時恢復 MonitorService 內存變數)
+    async getTodayTotalSeconds() {
+        const today = this.formatDate(new Date());
+        const results = this.db.exec(`
+            SELECT 
+                category,
+                SUM(duration_seconds) as total_seconds
+            FROM activities
+            WHERE date = '${today}'
+            GROUP BY category
+        `);
+
+        const secondsStats = {
+            work: 0,
+            leisure: 0,
+            other: 0,
+            idle: 0
+        };
+
+        if (results.length > 0) {
+            const rows = results[0].values;
+            for (const row of rows) {
+                const category = row[0];
+                const totalSeconds = row[1];
+
+                if (category === 'work') secondsStats.work = totalSeconds;
+                else if (category === 'leisure') secondsStats.leisure = totalSeconds;
+                else if (category === 'idle') secondsStats.idle = totalSeconds;
+                else if (category !== 'lunch_break') {
+                    secondsStats.other += totalSeconds;
+                }
+            }
+        }
+        return secondsStats;
     }
 
     // 取得指定日期的統計（用於補傳歷史報告）

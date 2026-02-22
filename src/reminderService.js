@@ -137,6 +137,8 @@ class ReminderService {
                 };
                 // 更新提醒歷史
                 this._saveReminderHistory(reminderId);
+                // [v1.2] 儲存今日狀態
+                this._saveTodayStatus();
 
                 // 強制關閉提醒視窗
                 this._closeReminderWindow();
@@ -157,6 +159,8 @@ class ReminderService {
                     status: 'snoozed',
                     snoozeCount
                 };
+                // [v1.2] 儲存今日狀態
+                this._saveTodayStatus();
 
                 // 強制關閉提醒視窗
                 this._closeReminderWindow();
@@ -186,6 +190,10 @@ class ReminderService {
         console.log('[Reminder] 啟動今日提醒排程...');
         const now = new Date();
         const today = now.getDay();
+        const todayStr = this._formatDate(now);
+
+        // [v1.2] 恢復今日狀態
+        this._loadTodayStatus(todayStr);
 
         // 取得下班時間資訊
         const workInfo = this.config.getTodayWorkInfo();
@@ -216,7 +224,6 @@ class ReminderService {
 
         // 取得已儲存的提醒紀錄
         const reminderHistory = this.config.get('reminderHistory') || {};
-        const todayStr = this._formatDate(now);
 
         // 初始化今日狀態（所有該觸發的提醒都標記為 pending）
         this.todayStatus = {};
@@ -625,6 +632,43 @@ class ReminderService {
         const month = String(date.getMonth() + 1).padStart(2, '0');
         const day = String(date.getDate()).padStart(2, '0');
         return `${year}-${month}-${day}`;
+    }
+
+    // [v1.2] 儲存今日提醒狀態到設定檔
+    _saveTodayStatus() {
+        try {
+            const todayStr = this._formatDate(new Date());
+            const data = {
+                date: todayStr,
+                status: this.todayStatus
+            };
+            this.config.set('reminderDailyState', data);
+        } catch (err) {
+            console.error('[Reminder] 儲存狀態失敗:', err);
+        }
+    }
+
+    // [v1.2] 從設定檔載入今日提醒狀態
+    _loadTodayStatus(todayStr) {
+        try {
+            const savedData = this.config.get('reminderDailyState');
+            if (savedData && savedData.date === todayStr) {
+                console.log('[Reminder] 發現今日已存狀態，正在恢復...');
+                this.todayStatus = savedData.status || {};
+
+                // 修正：將存檔中的 completedAt 轉回 Date 對象 (如果有需要)
+                return true;
+            } else {
+                // 如果日期不同，清空舊狀態
+                this.todayStatus = {};
+                this.config.set('reminderDailyState', null);
+                return false;
+            }
+        } catch (err) {
+            console.error('[Reminder] 載入狀態失敗:', err);
+            this.todayStatus = {};
+            return false;
+        }
     }
 }
 

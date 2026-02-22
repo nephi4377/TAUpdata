@@ -121,6 +121,9 @@ class MonitorService {
         // 立即執行一次取樣
         await this.sample();
 
+        // [v1.6] 重啟後恢復今日累計數據
+        await this._restoreTodayStats();
+
         // 設定定時取樣
         this.sampleTimer = setInterval(async () => {
             await this.sample();
@@ -136,6 +139,29 @@ class MonitorService {
 
         this.isRunning = false;
         console.log(`[Monitor] 監測服務已停止，共取樣 ${this.sampleCount} 次`);
+    }
+
+    // [v1.6] 從資料庫恢復今日已產生的統計數據
+    async _restoreTodayStats() {
+        try {
+            console.log('[Monitor] 正在嘗試從資料庫恢復今日數據...');
+            const stats = await this.storageService.getTodayTotalSeconds();
+
+            // 恢復工作時間 (work + other)
+            this.currentWorkSeconds = stats.work + stats.other;
+
+            // 恢復休閒時間
+            this.currentLeisureSeconds = stats.leisure;
+
+            // 由於重啟，視為觸發過一次休閒冷卻，避免重啟後立刻彈窗 (除非再次超過閾值)
+            if (this.currentLeisureSeconds >= this.leisureAlertThreshold) {
+                this.leisureAlertShown = true;
+            }
+
+            console.log(`[Monitor] 數據恢復成功: 工作 ${Math.floor(this.currentWorkSeconds / 60)}分, 休閒 ${Math.floor(this.currentLeisureSeconds / 60)}分`);
+        } catch (error) {
+            console.error('[Monitor] 數據恢復失敗:', error.message);
+        }
     }
 
     // 重設休閒追蹤

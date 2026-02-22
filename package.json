@@ -1,6 +1,6 @@
 {
     "name": "tienxin-productivity-assistant",
-    "version": "1.3.4",
+    "version": "1.6.0",
     "description": "添心生產力助手 - 員工生產力監測系統",
     "main": "main.js",
     "scripts": {

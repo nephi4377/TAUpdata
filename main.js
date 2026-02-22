@@ -392,3 +392,14 @@ ipcMain.handle('open-data-folder', () => {
 app.on('window-all-closed', () => {
     console.log('[Main] 所有視窗已關閉，程式繼續在背景執行...');
 });
+
+// [v1.6] 程式準備退出時，確保資料存檔
+app.on('before-quit', async () => {
+    console.log('[Main] 程式即將退出，正在儲存數據...');
+
+    if (monitorService) monitorService.stop();
+    if (reminderService) reminderService.stop();
+    if (storageService) await storageService.close();
+
+    console.log('[Main] 數據儲存完成，安全退出');
+});
