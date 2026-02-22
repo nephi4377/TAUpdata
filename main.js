@@ -264,6 +264,24 @@ async function initializeCheckinIntegration() {
 function handleWorkInfoUpdate(workInfo) {
     if (!workInfo) return;
     configManager.updateWorkInfo(workInfo);
+
+    // 如果已打卡，自動將打卡提醒標記成完成
+    if (workInfo.checkedIn && reminderService && reminderService.todayStatus) {
+        if (!reminderService.todayStatus['checkin_reminder'] || reminderService.todayStatus['checkin_reminder'].status !== 'completed') {
+            reminderService.todayStatus['checkin_reminder'] = {
+                status: 'completed',
+                completedAt: new Date().toISOString(),
+                autoCompleted: true
+            };
+            reminderService._saveTodayStatus();
+            console.log('[Main] 自動偵測到系統打卡，打卡提醒已自動完成！');
+            // 如果剛好有提醒視窗正在顯示，自動關閉它
+            if (reminderService.reminderWindow && !reminderService.reminderWindow.isDestroyed()) {
+                reminderService.reminderWindow.close();
+                reminderService.reminderWindow = null;
+            }
+        }
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -330,12 +348,29 @@ async function restartAppServices() {
     await initializeCheckinIntegration();
 
     console.log('[Main] 軟重啟完成，已無感套用新補丁！');
-    dialog.showMessageBox({
-        type: 'info',
-        title: '熱更新完成',
-        message: '增量補丁已加載套用成功！介面已自動刷新。',
-        buttons: ['確定']
-    });
+
+    // 取得當前應用包版本和補丁版本
+    const cv = app.getVersion();
+    let pv = cv; // 預設跟 app 一樣
+    try {
+        const patchVersionFile = require('path').join(app.getPath('userData'), 'patch_version.json');
+        if (require('fs').existsSync(patchVersionFile)) {
+            const data = JSON.parse(require('fs').readFileSync(patchVersionFile, 'utf8'));
+            if (data.version) pv = data.version;
+        }
+    } catch (e) { }
+
+    // 檢查這次軟重啟是不是因為我們剛套用了 "尚未通知過的" 新版本？
+    const lastNotifiedPatchStr = configManager.get('lastNotifiedPatch') || '';
+    if (pv !== cv && pv !== lastNotifiedPatchStr) {
+        dialog.showMessageBox({
+            type: 'info',
+            title: '熱更新完成',
+            message: `增量補丁 v${pv} 已加載套用成功！介面已自動刷新。`,
+            buttons: ['確定']
+        });
+        configManager.set('lastNotifiedPatch', pv);
+    }
 }
 
 // 啟動定時排程任務

@@ -16,6 +16,23 @@ class PatchUpdater {
     }
 
     /**
+     * 讀取當前有效版本 (含已套用的補丁版本)
+     */
+    getCurrentConfiguredVersion() {
+        let current = app.getVersion();
+        const patchVersionFile = path.join(this.userDataPath, 'patch_version.json');
+        if (fs.existsSync(patchVersionFile)) {
+            try {
+                const data = JSON.parse(fs.readFileSync(patchVersionFile, 'utf8'));
+                if (data.version && this.compareVersions(data.version, current) > 0) {
+                    current = data.version;
+                }
+            } catch (e) { }
+        }
+        return current;
+    }
+
+    /**
      * 檢查 GitHub 最新版本並比對目前版本
      */
     async checkForUpdates(isManual = false) {
@@ -29,7 +46,7 @@ class PatchUpdater {
             }
 
             const latestVersion = releaseInfo.tag_name.replace(/^v/, '');
-            const currentVersion = app.getVersion();
+            const currentVersion = this.getCurrentConfiguredVersion();
 
             log.info(`[PatchUpdater] 目前版本: ${currentVersion} / 最新版本: ${latestVersion}`);
 
@@ -52,7 +69,7 @@ class PatchUpdater {
                         });
                     }
 
-                    await this.downloadAndApplyPatch(patchAsset.browser_download_url, patchAsset.name);
+                    await this.downloadAndApplyPatch(patchAsset.browser_download_url, patchAsset.name, latestVersion);
                     return true; // 告知有補丁更新
                 } else {
                     log.info('[PatchUpdater] 最新 Release 不含 patch.zip，退回全量 autoUpdater');
@@ -122,7 +139,7 @@ class PatchUpdater {
         });
     }
 
-    downloadAndApplyPatch(url, filename) {
+    downloadAndApplyPatch(url, filename, latestVersion) {
         return new Promise((resolve, reject) => {
             const tempZipPath = path.join(os.tmpdir(), filename);
             const file = fs.createWriteStream(tempZipPath);
@@ -132,7 +149,7 @@ class PatchUpdater {
                 if (response.statusCode === 301 || response.statusCode === 302) {
                     return https.get(response.headers.location, (redirectResponse) => {
                         redirectResponse.pipe(file);
-                        this.handleFileStream(file, tempZipPath, resolve, reject);
+                        this.handleFileStream(file, tempZipPath, latestVersion, resolve, reject);
                     }).on('error', reject);
                 }
 
@@ -141,12 +158,12 @@ class PatchUpdater {
                 }
 
                 response.pipe(file);
-                this.handleFileStream(file, tempZipPath, resolve, reject);
+                this.handleFileStream(file, tempZipPath, latestVersion, resolve, reject);
             }).on('error', reject);
         });
     }
 
-    handleFileStream(file, tempZipPath, resolve, reject) {
+    handleFileStream(file, tempZipPath, latestVersion, resolve, reject) {
         file.on('finish', () => {
             file.close(() => {
                 log.info(`[PatchUpdater] 補丁下載完成: ${tempZipPath}，準備解壓縮套用...`);
@@ -161,6 +178,10 @@ class PatchUpdater {
                     zip.extractAllTo(this.patchDirPath, true);
 
                     log.info(`[PatchUpdater] 解壓縮完成，準備觸發內部熱重啟`);
+
+                    // 寫入版本檔案
+                    const patchVersionFile = path.join(this.userDataPath, 'patch_version.json');
+                    fs.writeFileSync(patchVersionFile, JSON.stringify({ version: latestVersion }), 'utf8');
 
                     // 觸發 application event
                     app.emit('patch-downloaded', tempZipPath);
