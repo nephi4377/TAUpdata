@@ -45,6 +45,7 @@ let adminDashboard = null; // [v2026.1 新增]
 // 排程計時器
 let workInfoRefreshTimer = null;
 let reportUploadTimer = null;
+let checkinReminderTimer = null;
 
 // 取得電腦名稱
 const PC_NAME = os.hostname();
@@ -363,12 +364,11 @@ async function restartAppServices() {
     // 檢查這次軟重啟是不是因為我們剛套用了 "尚未通知過的" 新版本？
     const lastNotifiedPatchStr = configManager.get('lastNotifiedPatch') || '';
     if (pv !== cv && pv !== lastNotifiedPatchStr) {
-        dialog.showMessageBox({
-            type: 'info',
-            title: '熱更新完成',
-            message: `增量補丁 v${pv} 已加載套用成功！介面已自動刷新。`,
-            buttons: ['確定']
-        });
+        console.log(`[Main] 增量補丁 v${pv} 已加載套用成功！介面已默默自動刷新。`);
+        // 使用系統原生通知取代彈窗，不再強制中斷使用者操作
+        if (Notification.isSupported()) {
+            new Notification({ title: '生產力助手更新完成', body: `增量補丁 v${pv} 已生效` }).show();
+        }
         configManager.set('lastNotifiedPatch', pv);
     }
 }
@@ -398,7 +398,8 @@ function startScheduledTasks() {
     }, 60 * 1000); // 每分鐘檢查一次
 
     // 3. [v2.2.8] 每 15 分鐘持續檢測打卡狀態，未打卡則提醒
-    setInterval(() => {
+    if (checkinReminderTimer) clearInterval(checkinReminderTimer);
+    checkinReminderTimer = setInterval(() => {
         const workInfo = configManager.getTodayWorkInfo();
         const now = new Date();
         const hour = now.getHours();

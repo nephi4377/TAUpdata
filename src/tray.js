@@ -106,7 +106,7 @@ class TrayManager {
     const productivityRate = stats.productivityRate || 0;
 
     const template = [
-      { label: `添心生產力助手 v${this.app.getVersion()} [熱更新 v1.7.5] (${statusLabel})`, enabled: false },
+      { label: `添心生產力助手 v${this.app.getVersion()} [熱更新 v1.7.6] (${statusLabel})`, enabled: false },
       { label: `今日工作: ${this.formatMinutes(stats.work)} (${productivityRate}%)`, enabled: false },
       {
         label: '📊 詳細統計 (歷史)',
@@ -789,12 +789,15 @@ class TrayManager {
           alert('操作失敗，請稍後再試');
         }
       }
+    }
 
-      // [v1.7] 自動定期重新整理
-      setInterval(() => {
+    // [v1.7] 自動定期重新整理
+    setInterval(() => {
+      if (window.reminderAPI) {
         window.reminderAPI.refreshStats();
-      }, 60 * 1000); // 每分鐘請求一次刷新 (主進程會寫入新 HTML 並 reload)
-    </script>
+      }
+    }, 60 * 1000); // 每分鐘請求一次刷新 (主進程會寫入新 HTML 並 reload)
+  </script>
   </head>
 <body>
   <div class="container">

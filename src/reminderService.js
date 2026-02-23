@@ -140,8 +140,16 @@ class ReminderService {
                 // [v1.2] 儲存今日狀態
                 this._saveTodayStatus();
 
-                // 強制關閉提醒視窗
-                this._closeReminderWindow();
+                // 強制關閉發送該 IPC 請求的視窗（解決孤兒視窗無法關閉的問題）
+                const win = BrowserWindow.fromWebContents(event.sender);
+                if (win && !win.isDestroyed()) {
+                    win.close();
+                }
+
+                // 如果正好是我們最後追蹤的視窗，順便清空參考
+                if (this.reminderWindow === win) {
+                    this.reminderWindow = null;
+                }
 
                 return { success: true };
             } catch (err) {
@@ -162,8 +170,15 @@ class ReminderService {
                 // [v1.2] 儲存今日狀態
                 this._saveTodayStatus();
 
-                // 強制關閉提醒視窗
-                this._closeReminderWindow();
+                // 強制關閉發送該 IPC 請求的視窗（解決孤兒視窗無法關閉的問題）
+                const win = BrowserWindow.fromWebContents(event.sender);
+                if (win && !win.isDestroyed()) {
+                    win.close();
+                }
+
+                if (this.reminderWindow === win) {
+                    this.reminderWindow = null;
+                }
 
                 // 20 分鐘後再提醒
                 const reminder = this.reminders.find(r => r.id === reminderId);
@@ -228,23 +243,7 @@ class ReminderService {
         // 初始化今日狀態（所有該觸發的提醒都標記為 pending）
         this.todayStatus = {};
 
-        // ★ 強制優先檢查打卡提醒 (checkin_reminder)
-        // 無論過了多久，只要開機時發現沒打卡，除了週末或非工作日外，一律要提醒！
-        // 但這裡我們簡化：只要有綁定員工且沒打卡，就提醒。
-        // (fireReminder 會再做最後確認，例如已打卡就不彈)
-        const checkinReminderConfig = this.reminders.find(r => r.id === 'checkin_reminder');
-        if (checkinReminderConfig && boundEmployee) {
-            const currentWorkInfo = this.config.getTodayWorkInfo();
-            if (!currentWorkInfo || !currentWorkInfo.checkedIn) {
-                console.log('[Reminder] 偵測到未打卡，強制安排開機提醒！');
-                this.todayStatus['checkin_reminder'] = { status: 'pending' };
-
-                // 5秒後觸發
-                setTimeout(() => {
-                    this.fireReminder(checkinReminderConfig, todayStr);
-                }, 5000);
-            }
-        }
+        // (這裡移除了原本重複的 checkin_reminder 5 秒觸發邏輯，因為底下的 loop 已經有 10 秒補彈機制，避免雙重觸發)
 
         let scheduledCount = 0;
 
