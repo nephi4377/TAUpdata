@@ -31,6 +31,14 @@ class TrayManager {
 
   // 初始化托盤
   async init() {
+    // 清除舊版或軟重啟遺留的孤兒視窗
+    const allWindows = BrowserWindow.getAllWindows();
+    for (const win of allWindows) {
+      if (!win.isDestroyed() && win.getTitle() === '添心生產力助手 - 詳細統計') {
+        win.destroy();
+      }
+    }
+
     // 建立托盤圖示
     const icon = this.createTrayIcon();
 
@@ -89,6 +97,28 @@ class TrayManager {
     return nativeImage.createFromBuffer(canvas, { width: size, height: size });
   }
 
+  // 取得當前真實運作版本 (含熱更新補丁)
+  getEffectiveVersion() {
+    let current = this.app.getVersion();
+    try {
+      const patchVersionFile = path.join(this.app.getPath('userData'), 'patch_version.json');
+      if (fs.existsSync(patchVersionFile)) {
+        const data = JSON.parse(fs.readFileSync(patchVersionFile, 'utf8'));
+        if (data.version) {
+          // 簡單比對版號決定是否使用補丁版本
+          const cvParts = current.split('.').map(Number);
+          const pvParts = data.version.split('.').map(Number);
+          const cv1 = cvParts[0] || 0, cv2 = cvParts[1] || 0, cv3 = cvParts[2] || 0;
+          const pv1 = pvParts[0] || 0, pv2 = pvParts[1] || 0, pv3 = pvParts[2] || 0;
+          if (pv1 > cv1 || (pv1 === cv1 && pv2 > cv2) || (pv1 === cv1 && pv2 === cv2 && pv3 > cv3)) {
+            current = data.version;
+          }
+        }
+      }
+    } catch (e) { }
+    return current;
+  }
+
   // 更新選單
   async updateMenu() {
     const status = this.monitorService.getStatus();
@@ -104,9 +134,10 @@ class TrayManager {
 
     // 使用新的生產力計算
     const productivityRate = stats.productivityRate || 0;
+    const effectiveVersion = this.getEffectiveVersion();
 
     const template = [
-      { label: `添心生產力助手 v${this.app.getVersion()} [熱更新 v1.7.6] (${statusLabel})`, enabled: false },
+      { label: `添心生產力助手 v${effectiveVersion} (${statusLabel})`, enabled: false },
       { label: `今日工作: ${this.formatMinutes(stats.work)} (${productivityRate}%)`, enabled: false },
       {
         label: '📊 詳細統計 (歷史)',
@@ -317,7 +348,7 @@ class TrayManager {
     this.tray.setContextMenu(contextMenu);
 
     // 更新 tooltip
-    const tooltipParts = [`添心生產力助手 v${this.app.getVersion()}`];
+    const tooltipParts = [`添心生產力助手 v${this.getEffectiveVersion()}`];
     if (boundEmployee) {
       tooltipParts.push(boundEmployee.userName);
     }
@@ -355,7 +386,7 @@ class TrayManager {
       return;
     }
 
-    if (this.statsWindow) {
+    if (this.statsWindow && !this.statsWindow.isDestroyed()) {
       this.statsWindow.focus();
       // 重新載入
       this.statsWindow.loadFile(tempPath);
@@ -802,7 +833,7 @@ class TrayManager {
 <body>
   <div class="container">
     <h1>📊 今日生產力報告</h1>
-    <div style="text-align: center; color: #888; font-size: 14px; margin-top: -10px; margin-bottom: 20px;">v${this.app.getVersion()}</div>
+    <div style="text-align: center; color: #888; font-size: 14px; margin-top: -10px; margin-bottom: 20px;">v${this.getEffectiveVersion()}</div>
     
     <div style="text-align: center; margin-bottom: 20px;">
       <span class="status-badge ${status.isPaused ? 'paused' : 'running'}">

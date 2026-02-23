@@ -157,6 +157,17 @@ class ConfigManager {
 
     // 取得設定值
     get(key) {
+        if (key === 'lastNotifiedPatch') {
+            // 為了不讓舊版唯讀的主程序(main.js)跳出 alert，直接無條件回傳目前的 pv
+            try {
+                const patchVersionFile = path.join(app.getPath('userData'), 'patch_version.json');
+                if (fs.existsSync(patchVersionFile)) {
+                    const data = JSON.parse(fs.readFileSync(patchVersionFile, 'utf8'));
+                    if (data.version) return data.version;
+                }
+            } catch (e) { }
+            return app.getVersion();
+        }
         return this.store.get(key);
     }
 
