@@ -6,6 +6,7 @@ const path = require('path');
 const log = require('electron-log');
 const AdmZip = require('adm-zip');
 const os = require('os');
+const { versionService } = require('./versionService');
 
 class PatchUpdater {
     constructor() {
@@ -19,17 +20,7 @@ class PatchUpdater {
      * 讀取當前有效版本 (含已套用的補丁版本)
      */
     getCurrentConfiguredVersion() {
-        let current = app.getVersion();
-        const patchVersionFile = path.join(this.userDataPath, 'patch_version.json');
-        if (fs.existsSync(patchVersionFile)) {
-            try {
-                const data = JSON.parse(fs.readFileSync(patchVersionFile, 'utf8'));
-                if (data.version && this.compareVersions(data.version, current) > 0) {
-                    current = data.version;
-                }
-            } catch (e) { }
-        }
-        return current;
+        return versionService.getEffectiveVersion();
     }
 
     /**
@@ -203,15 +194,7 @@ class PatchUpdater {
     }
 
     compareVersions(v1, v2) {
-        const parts1 = v1.split('.').map(Number);
-        const parts2 = v2.split('.').map(Number);
-        for (let i = 0; i < Math.max(parts1.length, parts2.length); i++) {
-            const p1 = parts1[i] || 0;
-            const p2 = parts2[i] || 0;
-            if (p1 > p2) return 1;
-            if (p1 < p2) return -1;
-        }
-        return 0;
+        return versionService.compareVersions(v1, v2);
     }
 }
 

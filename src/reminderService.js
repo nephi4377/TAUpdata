@@ -237,23 +237,30 @@ class ReminderService {
             offTimeMinutes = shiftEndMinutes;
         }
 
+        // [v1.2] 恢復今日狀態 (如果存檔日期是今天，會填充 this.todayStatus)
+        this.todayStatus = this.todayStatus || {};
+        const hasLoaded = this._loadTodayStatus(todayStr);
+
         // 取得已儲存的提醒紀錄
         const reminderHistory = this.config.get('reminderHistory') || {};
 
-        // 初始化今日狀態（所有該觸發的提醒都標記為 pending）
-        this.todayStatus = {};
-
-        // (這裡移除了原本重複的 checkin_reminder 5 秒觸發邏輯，因為底下的 loop 已經有 10 秒補彈機制，避免雙重觸發)
-
+        // 初始化今日狀態並進行排程
         let scheduledCount = 0;
-
         for (const reminder of this.reminders) {
             if (!this.shouldTriggerToday(reminder, today, todayStr, reminderHistory)) {
                 continue;
             }
 
-            // 標記為待完成
-            this.todayStatus[reminder.id] = { status: 'pending' };
+            // [v1.2] 標記為待完成 (如果狀態中尚無該項目)
+            if (!this.todayStatus[reminder.id]) {
+                this.todayStatus[reminder.id] = { status: 'pending' };
+            }
+
+            // 如果該提醒今日已完成，則跳過排程，避免重複彈窗
+            if (this.todayStatus[reminder.id].status === 'completed') {
+                console.log(`[Reminder] ${reminder.id} 今日已完成，不重新排程`);
+                continue;
+            }
 
             // 計算觸發時間
             let triggerTime = this.calculateTriggerTime(reminder, now, shiftStartMinutes, offTimeMinutes);
@@ -263,15 +270,10 @@ class ReminderService {
             if (triggerTime <= now) {
                 // 特殊規則：打卡提醒 (checkin_reminder) 即使過期也要補彈！
                 if (reminder.id === 'checkin_reminder') {
-                    // 詳細記錄為什麼觸發
                     const workInfo = this.config.getTodayWorkInfo();
-                    console.log(`[Reminder DEBUG] 檢查未打卡提醒: checkedIn=${workInfo?.checkedIn}, expectedOff=${workInfo?.expectedOffTime}`);
-
                     if (workInfo && !workInfo.checkedIn) {
-                        console.log(`[Reminder DEBUG] 尚未打卡且已過期，強制排程在10秒後補彈！`);
-                        triggerTime = new Date(now.getTime() + 10000);
+                        triggerTime = new Date(now.getTime() + 10000); // 10秒後補彈
                     } else {
-                        console.log(`[Reminder DEBUG] 已打卡或無狀態，不補彈`);
                         continue;
                     }
                 } else {
@@ -281,10 +283,7 @@ class ReminderService {
 
             // 設定計時器
             const delayMs = Math.max(0, triggerTime.getTime() - now.getTime());
-            console.log(`[Reminder DEBUG] 設定計時器: ${reminder.title} 將在 ${delayMs}ms 後觸發`);
-
             const timer = setTimeout(() => {
-                console.log(`[Reminder DEBUG] 計時器到期，呼叫 fireReminder: ${reminder.title}`);
                 this.fireReminder(reminder, todayStr);
             }, delayMs);
 
@@ -365,7 +364,7 @@ class ReminderService {
 
     // 觸發提醒
     fireReminder(reminder, todayStr) {
-        console.log(`[Reminder] 觸發提醒: ${reminder.icon} ${reminder.title}`);
+        console.log(`[Reminder] 觸發提醒: ${reminder.icon} ${reminder.title} `);
 
         // 如果已完成，不再提醒
         if (this.todayStatus[reminder.id]?.status === 'completed') {
@@ -422,111 +421,111 @@ class ReminderService {
 
         const messageHtml = reminder.message.replace(/\n/g, '<br>');
         const snoozeCount = this.todayStatus[reminder.id]?.snoozeCount || 0;
-        const snoozeLabel = snoozeCount > 0 ? `⏰ 稍後 (已延${snoozeCount}次)` : '⏰ 稍後提醒';
+        const snoozeLabel = snoozeCount > 0 ? `⏰ 稍後(已延${snoozeCount}次)` : '⏰ 稍後提醒';
 
         const html = `
-        <!DOCTYPE html>
+    < !DOCTYPE html >
         <html>
-        <head>
-            <meta charset="UTF-8">
-            <style>
-                body {
-                    margin: 0; padding: 0; overflow: hidden;
-                    font-family: 'Microsoft JhengHei', 'Segoe UI', sans-serif;
-                    background: transparent;
-                    animation: slideIn 0.4s ease-out;
+            <head>
+                <meta charset="UTF-8">
+                    <style>
+                        body {
+                            margin: 0; padding: 0; overflow: hidden;
+                        font-family: 'Microsoft JhengHei', 'Segoe UI', sans-serif;
+                        background: transparent;
+                        animation: slideIn 0.4s ease-out;
                 }
-                @keyframes slideIn {
-                    from { transform: translateX(-100%); opacity: 0; }
-                    to { transform: translateX(0); opacity: 1; }
+                        @keyframes slideIn {
+                            from {transform: translateX(-100%); opacity: 0; }
+                        to {transform: translateX(0); opacity: 1; }
                 }
-                .toast {
-                    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
-                    border: 1px solid rgba(255,255,255,0.15);
-                    border-left: 4px solid #e94560;
-                    border-radius: 12px;
-                    padding: 16px 20px;
-                    color: #e0e0e0;
-                    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
-                    height: calc(100vh - 34px);
-                    display: flex;
-                    flex-direction: column;
-                    justify-content: space-between;
+                        .toast {
+                            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+                        border: 1px solid rgba(255,255,255,0.15);
+                        border-left: 4px solid #e94560;
+                        border-radius: 12px;
+                        padding: 16px 20px;
+                        color: #e0e0e0;
+                        box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+                        height: calc(100vh - 34px);
+                        display: flex;
+                        flex-direction: column;
+                        justify-content: space-between;
                 }
-                .title {
-                    font-size: 15px;
-                    font-weight: bold;
-                    color: #ffffff;
-                    margin-bottom: 6px;
+                        .title {
+                            font - size: 15px;
+                        font-weight: bold;
+                        color: #ffffff;
+                        margin-bottom: 6px;
                 }
-                .message {
-                    font-size: 13px;
-                    line-height: 1.5;
-                    color: #b0b0b0;
-                    flex: 1;
+                        .message {
+                            font - size: 13px;
+                        line-height: 1.5;
+                        color: #b0b0b0;
+                        flex: 1;
                 }
-                .actions {
-                    display: flex;
-                    gap: 10px;
-                    margin-top: 12px;
+                        .actions {
+                            display: flex;
+                        gap: 10px;
+                        margin-top: 12px;
                 }
-                .btn {
-                    flex: 1;
-                    padding: 8px 12px;
-                    border: none;
-                    border-radius: 8px;
-                    font-size: 13px;
-                    font-weight: bold;
-                    cursor: pointer;
-                    transition: all 0.2s;
-                    font-family: inherit;
+                        .btn {
+                            flex: 1;
+                        padding: 8px 12px;
+                        border: none;
+                        border-radius: 8px;
+                        font-size: 13px;
+                        font-weight: bold;
+                        cursor: pointer;
+                        transition: all 0.2s;
+                        font-family: inherit;
                 }
-                .btn-complete {
-                    background: linear-gradient(135deg, #2ecc71, #27ae60);
-                    color: #fff;
+                        .btn-complete {
+                            background: linear-gradient(135deg, #2ecc71, #27ae60);
+                        color: #fff;
                 }
-                .btn-complete:hover {
-                    background: linear-gradient(135deg, #27ae60, #1e8449);
-                    transform: scale(1.02);
+                        .btn-complete:hover {
+                            background: linear-gradient(135deg, #27ae60, #1e8449);
+                        transform: scale(1.02);
                 }
-                .btn-snooze {
-                    background: rgba(255,255,255,0.1);
-                    color: #999;
-                    border: 1px solid rgba(255,255,255,0.15);
+                        .btn-snooze {
+                            background: rgba(255,255,255,0.1);
+                        color: #999;
+                        border: 1px solid rgba(255,255,255,0.15);
                 }
-                .btn-snooze:hover {
-                    background: rgba(255,255,255,0.15);
-                    color: #ccc;
+                        .btn-snooze:hover {
+                            background: rgba(255,255,255,0.15);
+                        color: #ccc;
                 }
-            </style>
-            <script>
+                    </style>
+                    <script>
                 // 增加點擊事件監聽，確保在 DOM 載入後執行
                 document.addEventListener('DOMContentLoaded', () => {
-                    document.getElementById('btn-complete').addEventListener('click', () => {
-                        window.reminderAPI.complete('${reminder.id}');
-                    });
+                            document.getElementById('btn-complete').addEventListener('click', () => {
+                                window.reminderAPI.complete('${reminder.id}');
+                            });
                     document.getElementById('btn-snooze').addEventListener('click', () => {
-                        window.reminderAPI.snooze('${reminder.id}');
+                            window.reminderAPI.snooze('${reminder.id}');
                     });
                 });
-            </script>
-        </head>
-        <body>
-            <div class="toast">
-                <div>
-                    <div class="title">${reminder.icon} ${reminder.title}</div>
-                    <div class="message">${messageHtml}</div>
+                    </script>
+            </head>
+            <body>
+                <div class="toast">
+                    <div>
+                        <div class="title">${reminder.icon} ${reminder.title}</div>
+                        <div class="message">${messageHtml}</div>
+                    </div>
+                    <div class="actions">
+                        <button id="btn-complete" class="btn btn-complete">
+                            ✅ 完成
+                        </button>
+                        <button id="btn-snooze" class="btn btn-snooze">
+                            ${snoozeLabel}
+                        </button>
+                    </div>
                 </div>
-                <div class="actions">
-                    <button id="btn-complete" class="btn btn-complete">
-                        ✅ 完成
-                    </button>
-                    <button id="btn-snooze" class="btn btn-snooze">
-                        ${snoozeLabel}
-                    </button>
-                </div>
-            </div>
-        </body>
+            </body>
         </html>`;
 
         // 寫入臨時檔案
@@ -605,12 +604,12 @@ class ReminderService {
             const reminder = this.reminders.find(r => r.id === id);
             if (!reminder) continue;
 
-            uncompleted.push(`${reminder.icon} ${reminder.title}`);
+            uncompleted.push(`${reminder.icon} ${reminder.title} `);
         }
 
         if (uncompleted.length === 0) return '';
 
-        return '【未完成提醒】\n' + uncompleted.map(item => `  ${item}`).join('\n');
+        return '【未完成提醒】\n' + uncompleted.map(item => `  ${item} `).join('\n');
     }
 
     // 停止所有提醒
@@ -630,7 +629,7 @@ class ReminderService {
         const year = date.getFullYear();
         const month = String(date.getMonth() + 1).padStart(2, '0');
         const day = String(date.getDate()).padStart(2, '0');
-        return `${year}-${month}-${day}`;
+        return `${year} -${month} -${day} `;
     }
 
     // [v1.2] 儲存今日提醒狀態到設定檔

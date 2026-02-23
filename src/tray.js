@@ -4,6 +4,7 @@
 const { Tray, Menu, nativeImage, Notification, app, BrowserWindow, shell, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { versionService } = require('./versionService');
 
 class TrayManager {
   constructor(appInstance, monitorService, storageService, configManager, checkinService, setupWindow, reminderService, classificationWindow, adminDashboard) {
@@ -99,24 +100,7 @@ class TrayManager {
 
   // 取得當前真實運作版本 (含熱更新補丁)
   getEffectiveVersion() {
-    let current = this.app.getVersion();
-    try {
-      const patchVersionFile = path.join(this.app.getPath('userData'), 'patch_version.json');
-      if (fs.existsSync(patchVersionFile)) {
-        const data = JSON.parse(fs.readFileSync(patchVersionFile, 'utf8'));
-        if (data.version) {
-          // 簡單比對版號決定是否使用補丁版本
-          const cvParts = current.split('.').map(Number);
-          const pvParts = data.version.split('.').map(Number);
-          const cv1 = cvParts[0] || 0, cv2 = cvParts[1] || 0, cv3 = cvParts[2] || 0;
-          const pv1 = pvParts[0] || 0, pv2 = pvParts[1] || 0, pv3 = pvParts[2] || 0;
-          if (pv1 > cv1 || (pv1 === cv1 && pv2 > cv2) || (pv1 === cv1 && pv2 === cv2 && pv3 > cv3)) {
-            current = data.version;
-          }
-        }
-      }
-    } catch (e) { }
-    return current;
+    return versionService.getEffectiveVersion();
   }
 
   // 更新選單
@@ -948,11 +932,13 @@ class TrayManager {
   showAboutDialog() {
     const { dialog } = require('electron');
 
+    const effectiveVersion = this.getEffectiveVersion();
+
     dialog.showMessageBox({
       type: 'info',
       title: '關於添心生產力助手',
       message: '添心生產力助手',
-      detail: `版本：1.0.0\n\n本系統會記錄：\n✅ 應用程式名稱與使用時長\n✅ 視窗標題（含網頁標題）\n\n本系統不會記錄：\n❌ 螢幕截圖\n❌ 鍵盤輸入\n❌ 網頁內容\n❌ 文件內容\n\n© 2026 添心室內裝修設計`,
+      detail: `版本：v${effectiveVersion}\n\n本系統會記錄：\n✅ 應用程式名稱與使用時長\n✅ 視窗標題（含網頁標題）\n\n本系統不會記錄：\n❌ 螢幕截圖\n❌ 鍵盤輸入\n❌ 網頁內容\n❌ 文件內容\n\n© 2026 添心室內裝修設計`,
       buttons: ['確定']
     });
   }

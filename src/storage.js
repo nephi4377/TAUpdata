@@ -19,26 +19,36 @@ class StorageService {
         const initSqlJs = require('sql.js');
         this.SQL = await initSqlJs();
 
-        // 資料庫存放路徑 (Portable Mode)
-        const DATA_DIR = path.join(__dirname, '..', 'data');
-        if (!fs.existsSync(DATA_DIR)) {
-            fs.mkdirSync(DATA_DIR, { recursive: true });
+        // 資料庫存放路徑：開發模式/Dropbox 執行時使用專案目錄 (Portable)，打包後使用系統 userData
+        let DATA_DIR;
+        if (app.isPackaged) {
+            DATA_DIR = app.getPath('userData');
+        } else {
+            DATA_DIR = path.join(__dirname, '..', 'data');
+            if (!fs.existsSync(DATA_DIR)) {
+                fs.mkdirSync(DATA_DIR, { recursive: true });
+            }
         }
-        this.dbPath = path.join(DATA_DIR, 'productivity_data.db');
 
+        this.dbPath = path.join(DATA_DIR, 'productivity_data.db');
         console.log(`[Storage] 資料庫路徑: ${this.dbPath}`);
 
-        // 檢查是否需要遷移舊資料庫
+        // [相容邏輯] 如果是從專案目錄切換到 AppData，或者反之，且目標檔案不存在時，嘗試互相遷移
         if (!fs.existsSync(this.dbPath)) {
             try {
-                const oldDbPath = path.join(app.getPath('userData'), 'productivity_data.db');
-                if (fs.existsSync(oldDbPath)) {
-                    console.log('[Storage] 發現舊資料庫，正在遷移至 Data 目錄...');
-                    fs.copyFileSync(oldDbPath, this.dbPath);
+                // 嘗試找尋「另一個可能的位置」
+                const otherDir = app.isPackaged
+                    ? path.join(__dirname, '..', 'data')
+                    : app.getPath('userData');
+                const otherDbPath = path.join(otherDir, 'productivity_data.db');
+
+                if (fs.existsSync(otherDbPath)) {
+                    console.log(`[Storage] 發現另一個位置的資料庫，正在遷移至: ${this.dbPath}`);
+                    fs.copyFileSync(otherDbPath, this.dbPath);
                     console.log('[Storage] 資料庫遷移完成');
                 }
             } catch (err) {
-                console.error('[Storage] 遷移舊資料庫失敗:', err);
+                console.error('[Storage] 遷移資料庫失敗 (可能目錄不具備寫入權限):', err);
             }
         }
 

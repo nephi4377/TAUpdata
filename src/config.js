@@ -4,6 +4,7 @@
 const Store = require('electron-store');
 const { app } = require('electron');
 const { v4: uuidv4 } = require('uuid');
+const { versionService } = require('./versionService');
 
 // ═══════════════════════════════════════════════════════════════
 // 管理者密碼設定
@@ -158,15 +159,8 @@ class ConfigManager {
     // 取得設定值
     get(key) {
         if (key === 'lastNotifiedPatch') {
-            // 為了不讓舊版唯讀的主程序(main.js)跳出 alert，直接無條件回傳目前的 pv
-            try {
-                const patchVersionFile = path.join(app.getPath('userData'), 'patch_version.json');
-                if (fs.existsSync(patchVersionFile)) {
-                    const data = JSON.parse(fs.readFileSync(patchVersionFile, 'utf8'));
-                    if (data.version) return data.version;
-                }
-            } catch (e) { }
-            return app.getVersion();
+            // 為了不讓舊版唯讀的主程序(main.js)跳出 alert，直接無條件回傳目前的有效版本
+            return versionService.getEffectiveVersion();
         }
         return this.store.get(key);
     }

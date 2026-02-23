@@ -1,0 +1,293 @@
+// v1.1 - 2026-02-23 15:45 (Asia/Taipei)
+// 修改內容: 完善 AppCore，遷移所有業務邏輯、IPC 處理程序與定時排程。
+// 使 main.js 成為純粹的啟動殼 (Launcher Shell)。
+
+const { app, BrowserWindow, Notification, ipcMain, shell, dialog } = require('electron');
+const path = require('path');
+const log = require('electron-log');
+const { autoUpdater } = require('electron-updater');
+
+class AppCore {
+    constructor(hotReloader, patchUpdater) {
+        this.hotReloader = hotReloader;
+        this.patchUpdater = patchUpdater;
+
+        this.services = {};
+        this.timers = {};
+        this.isManualCheck = false;
+    }
+
+    /**
+     * 啟動核心服務
+     */
+    async init() {
+        console.log('[Core] 核心模組啟動中...');
+
+        try {
+            // 1. 動態載入所有模組 (優先使用補丁)
+            const ConfigManager = this.hotReloader.loadModuleSafely('config', './src/config').ConfigManager;
+            const StorageService = this.hotReloader.loadModuleSafely('storage', './src/storage').StorageService;
+            const ClassifierService = this.hotReloader.loadModuleSafely('classifier', './src/classifier').ClassifierService;
+            const MonitorService = this.hotReloader.loadModuleSafely('monitor', './src/monitor').MonitorService;
+            const TrayManager = this.hotReloader.loadModuleSafely('tray', './src/tray').TrayManager;
+            const CheckinService = this.hotReloader.loadModuleSafely('checkinService', './src/checkinService').CheckinService;
+            const SetupWindow = this.hotReloader.loadModuleSafely('setupWindow', './src/setupWindow').SetupWindow;
+            const ReminderService = this.hotReloader.loadModuleSafely('reminderService', './src/reminderService').ReminderService;
+            const ClassificationWindow = this.hotReloader.loadModuleSafely('classificationWindow', './src/classificationWindow').ClassificationWindow;
+            const AdminDashboard = this.hotReloader.loadModuleSafely('adminDashboard', './src/adminDashboard').AdminDashboard;
+            const { versionService } = this.hotReloader.loadModuleSafely('versionService', './src/versionService');
+
+            // 2. 實例化並儲存服務
+            this.services.configManager = new ConfigManager();
+            await this.services.configManager.init();
+
+            this.services.storageService = new StorageService();
+            await this.services.storageService.init();
+
+            this.services.classifierService = new ClassifierService(this.services.configManager);
+            await this.services.classifierService.init();
+
+            this.services.checkinService = new CheckinService(this.services.configManager);
+
+            this.services.monitorService = new MonitorService(
+                this.services.storageService,
+                this.services.classifierService,
+                this.services.checkinService
+            );
+
+            this.services.setupWindow = new SetupWindow(this.services.configManager, this.services.checkinService);
+            this.services.classificationWindow = new ClassificationWindow(this.services.classifierService);
+
+            this.services.reminderService = new ReminderService(this.services.configManager, this.services.monitorService);
+            this.services.reminderService.start();
+
+            this.services.adminDashboard = new AdminDashboard(this.services.configManager, this.services.checkinService);
+
+            // 3. 托盤初始化
+            const setupWindowFn = (type) => this.services.setupWindow.createWindow(type);
+            this.services.trayManager = new TrayManager(
+                app,
+                this.services.monitorService,
+                this.services.storageService,
+                this.services.configManager,
+                this.services.checkinService,
+                setupWindowFn,
+                this.services.reminderService,
+                this.services.classificationWindow,
+                this.services.adminDashboard
+            );
+            await this.services.trayManager.init();
+
+            // 4. 打卡整合系統啟動 (原本 main.js 的 initializeCheckinIntegration)
+            await this.initializeCheckinIntegration();
+
+            // 5. 註冊所有 IPC 與 更新器監聽
+            this.setupIpcHandlers();
+            this.setupAutoUpdaterListeners();
+
+            // 6. 啟動監測
+            this.services.monitorService.start();
+
+            // 7. 最後檢查一次版本通知
+            this.checkVersionNotification(versionService);
+
+            console.log('[Core] 核心初始化成功');
+            return true;
+        } catch (err) {
+            console.error('[Core] 初始化失敗:', err);
+            dialog.showErrorBox('核心錯誤', `添心生產力助手核心模組載入失敗：\n${err.message}`);
+            return false;
+        }
+    }
+
+    /**
+     * 合併原本 main.js 的打卡整合邏輯
+     */
+    async initializeCheckinIntegration() {
+        const { checkinService, setupWindow, configManager, storageService } = this.services;
+        try {
+            const initResult = await checkinService.initializeOnStartup();
+            if (initResult.needSetup) {
+                const isHidden = process.argv.includes('--hidden');
+                if (!isHidden) await setupWindow.show('setup');
+            } else {
+                this.handleWorkInfoUpdate(initResult.workInfo);
+            }
+            checkinService.syncClassificationRules().catch(e => console.error(e));
+            await checkinService.checkAndSubmitYesterdayReport(storageService);
+            this.startScheduledTasks();
+        } catch (e) {
+            console.error('[Core] 打卡系統整合失敗:', e.message);
+        }
+    }
+
+    /**
+     * 處理打卡資訊更新與自動化提醒
+     */
+    handleWorkInfoUpdate(workInfo) {
+        if (!workInfo) return;
+        const { configManager, reminderService } = this.services;
+        configManager.updateWorkInfo(workInfo);
+
+        if (workInfo.checkedIn && reminderService?.todayStatus) {
+            const tr = reminderService.todayStatus['checkin_reminder'];
+            if (!tr || tr.status !== 'completed') {
+                reminderService.todayStatus['checkin_reminder'] = {
+                    status: 'completed',
+                    completedAt: new Date().toISOString(),
+                    autoCompleted: true
+                };
+                reminderService._saveTodayStatus();
+                if (reminderService.reminderWindow && !reminderService.reminderWindow.isDestroyed()) {
+                    reminderService.reminderWindow.close();
+                }
+            }
+        }
+    }
+
+    /**
+     * 排程工作
+     */
+    startScheduledTasks() {
+        const { checkinService, configManager, storageService, reminderService } = this.services;
+
+        // 每 1 小時刷新一次打卡資訊
+        this.timers.refresh = setInterval(async () => {
+            try {
+                const wi = await checkinService.refreshWorkInfo();
+                this.handleWorkInfoUpdate(wi);
+            } catch (e) { }
+        }, 60 * 60 * 1000);
+
+        // 每 15 分鐘檢查一次打卡補提示
+        this.timers.checkinCheck = setInterval(() => {
+            const wi = configManager.getTodayWorkInfo();
+            const hour = new Date().getHours();
+            if (hour >= 8 && hour <= 18 && (!wi || !wi.checkedIn)) {
+                const r = reminderService.reminders.find(x => x.id === 'checkin_reminder');
+                if (r) reminderService.fireReminder(r, reminderService._formatDate(new Date()));
+            }
+        }, 15 * 60 * 1000);
+
+        // 每天 18 點後自動檢查上傳報告
+        this.timers.report = setInterval(() => {
+            const now = new Date();
+            if (now.getMinutes() === 0) {
+                checkinService.submitTodayReport(storageService, reminderService).catch(e => console.error(e));
+            }
+        }, 60 * 1000);
+    }
+
+    /**
+     * 註冊 IPC 處理 (將原本 main.js 的 handlers 移入)
+     */
+    setupIpcHandlers() {
+        // 清除舊的才能重新註冊 (熱更新必備)
+        const channels = [
+            'get-status', 'pause-monitor', 'resume-monitor', 'get-hourly-stats',
+            'get-top-apps', 'open-data-folder', 'admin-login-verify',
+            'fetch-team-status', 'fetch-history-data'
+        ];
+        channels.forEach(ch => ipcMain.removeHandler(ch));
+        ipcMain.removeAllListeners('admin-login-verify');
+        ipcMain.removeAllListeners('fetch-team-status');
+        ipcMain.removeAllListeners('fetch-history-data');
+
+        const { monitorService, storageService, configManager, checkinService } = this.services;
+
+        ipcMain.handle('get-status', () => monitorService?.getStatus());
+        ipcMain.handle('pause-monitor', (e, d) => monitorService?.pause(d));
+        ipcMain.handle('resume-monitor', () => monitorService?.resume());
+        ipcMain.handle('get-hourly-stats', () => storageService?.getHourlyStats());
+        ipcMain.handle('get-top-apps', (e, d) => storageService?.getRecentTopApps(d || 7));
+        ipcMain.handle('open-data-folder', () => shell.openPath(app.getPath('userData')));
+
+        ipcMain.on('admin-login-verify', (e, p) => e.reply('admin-login-result', configManager.verifyAdminPassword(p)));
+        ipcMain.on('fetch-team-status', async (e) => {
+            const res = await checkinService._get({ action: 'get_team_status' }).catch(err => ({ success: false, message: err.message }));
+            e.reply('team-status-data', res);
+        });
+        ipcMain.on('fetch-history-data', async (e, a) => {
+            const res = await checkinService._get({ action: 'get_productivity_history', ...a }).catch(err => ({ success: false, message: err.message }));
+            e.reply('history-data-result', res);
+        });
+    }
+
+    /**
+     * 更新器監聽
+     */
+    setupAutoUpdaterListeners() {
+        autoUpdater.removeAllListeners('update-available');
+        autoUpdater.removeAllListeners('update-not-available');
+        autoUpdater.removeAllListeners('update-downloaded');
+
+        autoUpdater.on('update-available', (info) => {
+            dialog.showMessageBox({
+                type: 'info',
+                title: '發現新版本',
+                message: `發現新版本 v${info.version}，正在背景下載中...\n更新內容：\n${info.releaseNotes || '無版本說明'}`,
+                buttons: ['確定']
+            });
+        });
+
+        autoUpdater.on('update-not-available', () => {
+            if (this.isManualCheck) {
+                dialog.showMessageBox({ type: 'info', title: '檢查更新', message: '目前已是最新版本！', buttons: ['確定'] });
+                this.isManualCheck = false;
+            }
+        });
+
+        autoUpdater.on('update-downloaded', (info) => {
+            log.info(`[Updater] v${info.version} 下載完成`);
+        });
+
+        // 監聽手動更新請求
+        app.removeAllListeners('check-for-updates-manual');
+        app.on('check-for-updates-manual', async () => {
+            this.isManualCheck = true;
+            const patched = await this.patchUpdater.checkForUpdates(true);
+            if (!patched && app.isPackaged) autoUpdater.checkForUpdates();
+        });
+    }
+
+    /**
+     * 檢查是否顯示版本更新通知
+     */
+    checkVersionNotification(versionService) {
+        const { configManager } = this.services;
+        const ev = versionService.getEffectiveVersion();
+        const bv = versionService.getBaseVersion();
+        const last = configManager.get('lastNotifiedPatch') || '';
+
+        if (versionService.compareVersions(ev, bv) > 0 && versionService.compareVersions(ev, last) > 0) {
+            if (Notification.isSupported()) {
+                new Notification({ title: '生產力助手更新完成', body: `增量補丁 v${ev} 已生效` }).show();
+            }
+            configManager.set('lastNotifiedPatch', ev);
+        }
+    }
+
+    /**
+     * 熱重啟
+     */
+    async restartServices() {
+        log.info('[Core] 準備執行熱重啟...');
+
+        // 1. 停止服務
+        if (this.services.monitorService) this.services.monitorService.stop();
+        if (this.services.reminderService) this.services.reminderService.stop();
+        if (this.services.storageService) await this.services.storageService.close();
+
+        // 2. 清除計時器
+        for (const k in this.timers) clearInterval(this.timers[k]);
+        this.timers = {};
+
+        // 3. 銷毀 UI
+        if (this.services.trayManager) this.services.trayManager.destroy();
+
+        // 4. 重啟初始化
+        return await this.init();
+    }
+}
+
+module.exports = { AppCore };

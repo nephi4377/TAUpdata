@@ -38,10 +38,43 @@ class HotReloader {
                 // 讀取補丁代碼
                 const content = fs.readFileSync(patchFilePath, 'utf8');
 
-                // 創建一個新的 node module 實例，繼承目前環境，並賦予其等同於「廠房代碼」的偽裝路徑
+                // 創建一個新的 node module 實例
+                // absoluteLocalPath 是廠房原始路徑 (例如 d:\...\src\monitor.js)
                 const m = new Module(absoluteLocalPath, module);
                 m.filename = absoluteLocalPath;
                 m.paths = Module._nodeModulePaths(path.dirname(absoluteLocalPath));
+
+                // 【核心補強】: 修正補丁中的 require 邏輯
+                // 攔截補丁內部的 require，使其優先查找 patchDirPath
+                const originalRequire = m.require;
+                m.require = (request) => {
+                    // 只處理以 . 或 .. 開頭的相對路徑
+                    if (request.startsWith('.')) {
+                        const targetPath = path.resolve(path.dirname(absoluteLocalPath), request);
+                        const fileName = path.basename(targetPath);
+                        const relativeToSrc = path.relative(path.resolve(__dirname, '..', 'src'), targetPath);
+
+                        // 判斷請求的是否為 src 內的模組
+                        if (!relativeToSrc.startsWith('..') && !path.isAbsolute(relativeToSrc)) {
+                            // 嘗試從 Patch 目錄載入
+                            const patchedTargetName = relativeToSrc.replace(/\\/g, '/'); // 轉為正斜線
+                            // 注意：我們避開遞迴，只檢查檔案是否存在
+                            const possiblePatchFile = path.join(this.patchDirPath, 'src',
+                                patchedTargetName.endsWith('.js') ? patchedTargetName : `${patchedTargetName}.js`);
+
+                            if (fs.existsSync(possiblePatchFile)) {
+                                // 遞迴使用 loadModuleSafely 載入這個子依賴包
+                                // 這裡需要將 relativePath 轉回 ./src/xxx 格式
+                                return this.loadModuleSafely(
+                                    patchedTargetName.replace('.js', ''),
+                                    `./src/${patchedTargetName.replace('.js', '')}`
+                                );
+                            }
+                        }
+                    }
+                    // 其他情況（如引用 node_modules）交回原始 require
+                    return originalRequire.call(m, request);
+                };
 
                 // 進行編譯與沙盒執行
                 m._compile(content, absoluteLocalPath);
