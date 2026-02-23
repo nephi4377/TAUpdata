@@ -45,7 +45,7 @@ class AppCore {
             await this.services.storageService.init();
 
             this.services.classifierService = new ClassifierService(this.services.configManager);
-            await this.services.classifierService.init();
+            // ClassifierService 在 constructor 已完成加載，無需 init()
 
             this.services.checkinService = new CheckinService(this.services.configManager);
 
