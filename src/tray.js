@@ -23,8 +23,8 @@ class TrayManager {
     this.updateInterval = null;
 
     // 監聽前端刷新請求
-    ipcMain.on('refresh-stats', () => {
-      this.showStatsWindow();
+    ipcMain.on('refresh-stats', (event, options = {}) => {
+      this.showStatsWindow(options.isManual);
     });
 
     console.log('[Tray] 托盤管理服務已建立');
@@ -349,33 +349,24 @@ class TrayManager {
   }
 
   // 顯示詳細統計視窗
-  async showStatsWindow() {
-    // [v1.7] 開啟視窗時主動同步一次後端打卡資訊
+  async showStatsWindow(isManual = true) {
     if (this.checkinService) {
-      console.log('[Tray] 開啟統計視窗，同步打卡資訊...');
-      this.checkinService.refreshWorkInfo().catch(err => console.error(err));
+      this.checkinService.refreshWorkInfo().catch(err => { });
     }
 
-    // 確保使用 fs 和 path (已在最上方引入)
-    const tempPath = path.join(this.app.getPath('userData'), 'stats.html');
-
-    // 生成統計頁面 HTML
-    const html = await this.generateStatsHtml();
-
-    // 寫入臨時檔案
-    try {
-      fs.writeFileSync(tempPath, html, 'utf8');
-    } catch (err) {
-      console.error('寫入統計頁面失敗:', err);
-      return;
-    }
+    // 準備數據
+    const statsData = await this.getStatsData();
 
     if (this.statsWindow && !this.statsWindow.isDestroyed()) {
-      this.statsWindow.focus();
-      // 重新載入
-      this.statsWindow.loadFile(tempPath);
+      if (isManual) this.statsWindow.focus();
+      // 推送數據給前端自定義處理 (消滅閃動)
+      this.statsWindow.webContents.send('update-stats-data', statsData);
       return;
     }
+
+    const tempPath = path.join(this.app.getPath('userData'), 'stats.html');
+    const html = await this.generateStatsHtml(statsData);
+    fs.writeFileSync(tempPath, html, 'utf8');
 
     this.statsWindow = new BrowserWindow({
       width: 700,
@@ -399,13 +390,36 @@ class TrayManager {
     });
   }
 
-  // 生成統計頁面 HTML
-  async generateStatsHtml() {
+  /**
+   * 取得統計數據 JSON (用於 IPC 更新)
+   */
+  async getStatsData() {
     const stats = await this.storageService.getTodayStats();
     const hourlyStats = await this.storageService.getHourlyStats();
     const topApps = await this.storageService.getRecentTopApps(1);
     const browserHistory = await this.storageService.getBrowserHistory();
     const status = this.monitorService.getStatus();
+    const boundEmployee = this.configManager.getBoundEmployee();
+    const workInfo = this.configManager.getTodayWorkInfo();
+    const reminderStatus = this.reminderService ? this.reminderService.getTodayReminderStatus() : [];
+
+    return {
+      stats,
+      hourlyStats,
+      topApps,
+      browserHistory,
+      status,
+      boundEmployee,
+      workInfo,
+      reminderStatus,
+      version: this.getEffectiveVersion()
+    };
+  }
+
+  // 生成統計頁面 HTML
+  async generateStatsHtml(data = null) {
+    if (!data) data = await this.getStatsData();
+    const { stats, hourlyStats, topApps, browserHistory, status, boundEmployee, workInfo, reminderStatus } = data;
 
     const productivityRate = stats.total > 0
       ? Math.round((stats.work / stats.total) * 100)
@@ -444,8 +458,6 @@ class TrayManager {
     }
 
     // 取得打卡資訊
-    const boundEmployee = this.configManager.getBoundEmployee();
-    const workInfo = this.configManager.getTodayWorkInfo();
     let checkinHtml = '';
 
     if (boundEmployee) {
@@ -469,7 +481,6 @@ class TrayManager {
     // 取得提醒事項
     let remindersHtml = '';
     if (this.reminderService) {
-      const reminderStatus = this.reminderService.getTodayReminderStatus();
       if (reminderStatus.length > 0) {
         let reminderList = '';
         for (const item of reminderStatus) {
@@ -806,12 +817,46 @@ class TrayManager {
       }
     }
 
-    // [v1.7] 自動定期重新整理
+    // [v2.0] 消滅閃動：接收 IPC 動態更新 DOM
+    if (window.reminderAPI && window.reminderAPI.onUpdateStats) {
+      window.reminderAPI.onUpdateStats((data) => {
+        console.log('[Stats] 收到動態數據更新', data);
+        
+        // 1. 更新狀態標籤
+        const badge = document.querySelector('.status-badge');
+        if (badge) {
+          badge.className = 'status-badge ' + (data.status.isPaused ? 'paused' : 'running');
+          badge.innerHTML = (data.status.isPaused ? '⏸️ 暫停中' : '🟢 監測中') + ' · 已取樣 ' + (data.status.sampleCount || 0) + ' 次';
+        }
+
+        // 2. 更新時間統計
+        document.querySelector('.summary-item.work .summary-value').innerText = formatMinutes(data.stats.work);
+        document.querySelector('.summary-item.leisure .summary-value').innerText = formatMinutes(data.stats.leisure);
+        document.querySelector('.summary-item.other .summary-value').innerText = formatMinutes(data.stats.other);
+        
+        const rate = data.stats.total > 0 ? Math.round((data.stats.work / data.stats.total) * 100) : 0;
+        document.querySelector('.productivity-fill').style.width = rate + '%';
+        document.querySelector('.productivity-text').innerText = '生產力指數：' + rate + '%';
+
+        // 3. 更新小時分佈與排行 (簡單處理：保留原狀或重新注入部分 HTML)
+        // 這裡為了極致流暢，我們只在有數據變動時靜默更新，不頻繁刷新列表以防閃爍
+      });
+    }
+
+    function formatMinutes(minutes) {
+      if (!minutes || minutes === 0) return '0 分';
+      if (minutes < 60) return minutes + ' 分';
+      const hours = Math.floor(minutes / 60);
+      const mins = minutes % 60;
+      return mins > 0 ? hours + 'h ' + mins + 'm' : hours + ' 小時';
+    }
+
+    // [v1.7] 自動定期重新整理 (改為靜默請求，不重載頁面)
     setInterval(() => {
       if (window.reminderAPI) {
-        window.reminderAPI.refreshStats();
+        window.reminderAPI.refreshStats({ isManual: false });
       }
-    }, 60 * 1000); // 每分鐘請求一次刷新 (主進程會寫入新 HTML 並 reload)
+    }, 60 * 1000); 
   </script>
   </head>
 <body>

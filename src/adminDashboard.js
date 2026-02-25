@@ -259,8 +259,8 @@ class AdminDashboard {
                 if (r.anomalies?.includes('high_leisure')) tags += '<span class="tag tag-warning">高休閒</span>';
                 const isSelected = selectedKey === i;
                 
-                // [v1.7 FIX] 改用 encodeURIComponent 處理跳脫問題，避免 inline onClick 字串解析錯誤
-                const cleanDet = encodeURIComponent(r.detailText || '');
+                // [v1.8.4 FIX] 改用 encodeURIComponent 處理跳脫問題，並強制轉義單引號，避免 inline onClick 參數解析引發 Syntax Error
+                const cleanDet = encodeURIComponent(r.detailText || '').replace(/'/g, "%27");
 
                 let rowHtml = '<tr data-name="' + r.userName + '" class="' + (isSelected ? 'selected' : '') + ' ' + (r.anomalies?.length ? 'anomaly-row' : '') + '" onclick="focusRow(' + i + ')">';
                 rowHtml += '<td>' + r.date + '</td>';
@@ -318,7 +318,7 @@ function closeModal() { document.getElementById('modal-overlay').style.display =
 </body >
 </html >
     `;
-        this.window.loadURL(`data: text / html; charset = utf - 8, ${encodeURIComponent(htmlContent)} `);
+        this.window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(htmlContent)}`);
     }
 
     _stopAutoUpdate() { }

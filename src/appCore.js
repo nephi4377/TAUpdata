@@ -91,12 +91,36 @@ class AppCore {
             // 7. 最後檢查一次版本通知
             this.checkVersionNotification(versionService);
 
+            // 8. 確保開機啟動設定已註冊
+            this.applyAutoStartSettings();
+
             console.log('[Core] 核心初始化成功');
             return true;
         } catch (err) {
             console.error('[Core] 初始化失敗:', err);
             dialog.showErrorBox('核心錯誤', `添心生產力助手核心模組載入失敗：\n${err.message}`);
             return false;
+        }
+    }
+
+    /**
+     * [v1.1.2 新增] 確保 Electron 程式在開機時自動啟動
+     */
+    applyAutoStartSettings() {
+        if (!app.isPackaged) return; // 開發環境不註冊
+
+        const { configManager } = this.services;
+        const autoStart = configManager.get('autoStart');
+
+        try {
+            app.setLoginItemSettings({
+                openAtLogin: autoStart,
+                path: app.getPath('exe'),
+                args: ['--hidden'] // 靜默啟動
+            });
+            log.info(`[Core] 開機啟動設定已更新: ${autoStart}`);
+        } catch (e) {
+            log.error(`[Core] 無法設定開機啟動: ${e.message}`);
         }
     }
 

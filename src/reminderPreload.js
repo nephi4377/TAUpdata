@@ -9,5 +9,7 @@ contextBridge.exposeInMainWorld('reminderAPI', {
     // 稍後再提醒
     snooze: (reminderId) => ipcRenderer.invoke('reminder-snooze', reminderId),
     // 請求刷新統計視窗
-    refreshStats: () => ipcRenderer.send('refresh-stats')
+    refreshStats: () => ipcRenderer.send('refresh-stats'),
+    // 監聽數據更新 (用於消滅閃動的動態 DOM 更新)
+    onUpdateStats: (callback) => ipcRenderer.on('update-stats-data', (event, data) => callback(data))
 });
