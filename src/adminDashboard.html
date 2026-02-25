@@ -251,6 +251,10 @@
             font-weight: 600;
         }
 
+        .scrollbar {
+            transition: all 0.3s;
+        }
+
         .scrollbar::-webkit-scrollbar {
             width: 6px;
         }
@@ -259,10 +263,27 @@
             background: #d9d9d9;
             border-radius: 3px;
         }
+
+        #loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(255, 255, 255, 0.8);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 3000;
+            font-weight: 600;
+            color: var(--primary-color);
+        }
     </style>
 </head>
 
 <body>
+    <div id="loading-overlay">正在讀取數據...</div>
+
     <div id="modal-overlay" onclick="closeModal()">
         <div class="modal-box" onclick="event.stopPropagation()">
             <div class="modal-header">
@@ -347,11 +368,13 @@
         function initDefaults() {
             const today = new Date().toISOString().split('T')[0];
             document.getElementById('end-date').value = today;
-            const weekAgo = new Date(); weekAgo.setDate(weekAgo.getDate() - 7);
+            const weekAgo = new Date();
+            weekAgo.setDate(weekAgo.getDate() - 7);
             document.getElementById('start-date').value = weekAgo.toISOString().split('T')[0];
         }
 
         function loadHistory() {
+            document.getElementById('loading-overlay').style.display = 'flex';
             ipcRenderer.send('fetch-history-data', {
                 startDate: document.getElementById('start-date').value,
                 endDate: document.getElementById('end-date').value
@@ -359,7 +382,20 @@
         }
 
         ipcRenderer.on('history-data-result', (e, res) => {
-            if (!res.success) return alert(res.message);
+            document.getElementById('loading-overlay').style.display = 'none';
+            console.log('[AdminDashboard] 收到數據回傳:', res);
+
+            if (!res.success) {
+                console.error('[AdminDashboard] Fetch error:', res.message);
+                return alert('查詢失敗: ' + res.message);
+            }
+            if (!res.data || !res.data.daily || res.data.daily.length === 0) {
+                console.warn('[AdminDashboard] No data returned');
+                alert('所選範圍內查無資料 (可能尚未上傳或篩選錯誤)');
+                rawData = { summary: null, categoryStats: null, daily: [] };
+                resetFocus();
+                return;
+            }
             rawData = res.data;
             resetFocus();
         });
@@ -368,58 +404,71 @@
             if (!rawData) return;
             selectedKey = null;
             document.querySelectorAll('#history-body tr').forEach(r => r.classList.remove('selected'));
-            updateUI(rawData.summary, rawData.categoryStats, rawData.daily);
+            updateUI(rawData.summary, rawData.categoryStats, rawData.daily || []);
             document.getElementById('status-text').innerText = '顯示全部總計數據';
         }
 
         function focusRow(idx) {
-            if (!rawData) return;
+            if (!rawData || !rawData.daily || !rawData.daily[idx]) return;
             const row = rawData.daily[idx];
             selectedKey = idx;
             document.querySelectorAll('#history-body tr').forEach((r, i) => {
                 r.classList.toggle('selected', i === idx);
             });
             const focusedSummary = {
-                totalWork: row.work,
-                totalIdle: row.idle,
-                avgProductivity: row.productivity,
+                totalWork: row.work || 0,
+                totalIdle: row.idle || 0,
+                avgProductivity: row.productivity || 0,
                 records: 1
             };
             const focusedCatStats = {
-                work: row.work,
-                idle: row.idle,
-                leisure: row.leisure,
+                work: row.work || 0,
+                idle: row.idle || 0,
+                leisure: row.leisure || 0,
                 other: row.other || 0
             };
             updateUI(focusedSummary, focusedCatStats, rawData.daily, true);
-            document.getElementById('status-text').innerText = '正在查看 ' + row.userName + ' (' + row.date + ') 的單日產能焦點';
+            document.getElementById('status-text').innerText = '正在查看 ' + (row.userName || '未知') + ' (' + row.date + ') 的單日產能焦點';
         }
 
         function updateUI(summary, catStats, daily, isFocused = false) {
-            document.getElementById('val-work').innerText = Math.round(summary.totalWork);
-            document.getElementById('val-idle').innerText = Math.round(summary.totalIdle);
-            document.getElementById('val-prod').innerText = summary.avgProductivity + '%';
-            document.getElementById('val-count').innerText = summary.records;
-            renderCharts(catStats, daily);
-            if (!isFocused) renderHistoryTable(daily);
+            if (!summary) summary = { totalWork: 0, totalIdle: 0, avgProductivity: 0, records: 0 };
+            if (!catStats) catStats = { work: 0, idle: 0, leisure: 0, other: 0 };
+
+            document.getElementById('val-work').innerText = Math.round(summary.totalWork || 0);
+            document.getElementById('val-idle').innerText = Math.round(summary.totalIdle || 0);
+            document.getElementById('val-prod').innerText = (summary.avgProductivity || 0) + '%';
+            document.getElementById('val-count').innerText = summary.records || 0;
+
+            try {
+                renderCharts(catStats, daily);
+            } catch (err) {
+                console.error('[AdminDashboard] Chart rendering error:', err);
+            }
+
+            if (!isFocused) renderHistoryTable(daily || []);
         }
 
         function renderHistoryTable(data) {
             const tbody = document.getElementById('history-body');
+            if (!data || data.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; padding:40px; color:#999;">查無符合條件的數據</td></tr>';
+                return;
+            }
             tbody.innerHTML = data.map((r, i) => {
                 let tags = '';
-                if (r.anomalies?.includes('low_score')) tags += '<span class="tag tag-danger">低生產力</span>';
-                if (r.anomalies?.includes('high_leisure')) tags += '<span class="tag tag-warning">高休閒</span>';
+                if (r.anomalies && r.anomalies.includes('low_score')) tags += '<span class="tag tag-danger">低生產力</span>';
+                if (r.anomalies && r.anomalies.includes('high_leisure')) tags += '<span class="tag tag-warning">高休閒</span>';
                 const isSelected = selectedKey === i;
 
                 const cleanDet = encodeURIComponent(r.detailText || '').replace(/'/g, "%27");
 
-                let rowHtml = '<tr data-name="' + r.userName + '" class="' + (isSelected ? 'selected' : '') + ' ' + (r.anomalies?.length ? 'anomaly-row' : '') + '" onclick="focusRow(' + i + ')">';
-                rowHtml += '<td>' + r.date + '</td>';
-                rowHtml += '<td style="font-weight:600">' + r.userName + '</td>';
-                rowHtml += '<td>' + r.work + '</td>';
-                rowHtml += '<td>' + r.leisure + '</td>';
-                rowHtml += '<td class="' + (r.productivity < 60 ? 'text-danger' : 'text-success') + '">' + r.productivity + '%</td>';
+                let rowHtml = '<tr data-name="' + (r.userName || '') + '" class="' + (isSelected ? 'selected' : '') + ' ' + (r.anomalies && r.anomalies.length ? 'anomaly-row' : '') + '" onclick="focusRow(' + i + ')">';
+                rowHtml += '<td>' + (r.date || '-') + '</td>';
+                rowHtml += '<td style="font-weight:600">' + (r.userName || '未知') + '</td>';
+                rowHtml += '<td>' + (r.work || 0) + '</td>';
+                rowHtml += '<td>' + (r.leisure || 0) + '</td>';
+                rowHtml += '<td class="' + (r.productivity < 60 ? 'text-danger' : 'text-success') + '">' + (r.productivity || 0) + '%</td>';
                 rowHtml += '<td><div class="scrollbar" style="max-height:45px; overflow-y:auto; font-size:12px; cursor:zoom-in" onclick="event.stopPropagation(); showDetailModal(\'' + r.date + '\', \'' + r.userName + '\', decodeURIComponent(\'' + cleanDet + '\'))">';
                 rowHtml += (r.detailText ? r.detailText.substring(0, 45).replace(/</g, "&lt;").replace(/>/g, "&gt;") + '...' : '點擊放大內容');
                 rowHtml += '</div></td>';
@@ -439,24 +488,43 @@
         }
 
         function renderCharts(catStats, daily) {
+            if (typeof Chart === 'undefined') {
+                console.warn('[AdminDashboard] Chart.js utility not loaded.');
+                return;
+            }
+
             if (charts.pie) charts.pie.destroy();
             if (charts.bar) charts.bar.destroy();
-            charts.pie = new Chart(document.getElementById('chart-pie'), {
-                type: 'doughnut',
-                data: {
-                    labels: ['工作', '閒置', '休閒', '其他'],
-                    datasets: [{ data: [catStats.work, catStats.idle, catStats.leisure, catStats.other], backgroundColor: ['#52c41a', '#faad14', '#ff4d4f', '#8c8c8c'] }]
-                },
-                options: { maintainAspectRatio: false, plugins: { title: { display: true, text: '產能占比比例分析' } } }
-            });
-            charts.bar = new Chart(document.getElementById('chart-bar'), {
-                type: 'bar',
-                data: {
-                    labels: daily.map(x => x.date.split('-').slice(1).join('/')),
-                    datasets: [{ label: '工作時間', data: daily.map(x => x.work), backgroundColor: '#52c41a' }, { label: '閒置時間', data: daily.map(x => x.idle), backgroundColor: '#faad14' }]
-                },
-                options: { maintainAspectRatio: false, scales: { x: { stacked: true }, y: { stacked: true } }, plugins: { title: { display: true, text: '每日產能趨勢 (分)' } } }
-            });
+
+            const pieCtx = document.getElementById('chart-pie');
+            if (pieCtx) {
+                charts.pie = new Chart(pieCtx, {
+                    type: 'doughnut',
+                    data: {
+                        labels: ['工作', '閒置', '休閒', '其他'],
+                        datasets: [{
+                            data: [catStats.work || 0, catStats.idle || 0, catStats.leisure || 0, catStats.other || 0],
+                            backgroundColor: ['#52c41a', '#faad14', '#ff4d4f', '#8c8c8c']
+                        }]
+                    },
+                    options: { maintainAspectRatio: false, plugins: { title: { display: true, text: '產能占比比例分析' } } }
+                });
+            }
+
+            const barCtx = document.getElementById('chart-bar');
+            if (barCtx && daily && Array.isArray(daily)) {
+                charts.bar = new Chart(barCtx, {
+                    type: 'bar',
+                    data: {
+                        labels: daily.map(x => (x.date || '').split('-').slice(1).join('/')),
+                        datasets: [
+                            { label: '工作時間', data: daily.map(x => x.work || 0), backgroundColor: '#52c41a' },
+                            { label: '閒置時間', data: daily.map(x => x.idle || 0), backgroundColor: '#faad14' }
+                        ]
+                    },
+                    options: { maintainAspectRatio: false, scales: { x: { stacked: true }, y: { stacked: true } }, plugins: { title: { display: true, text: '每日產能趨勢 (分)' } } }
+                });
+            }
         }
 
         function showDetailModal(date, name, content) {

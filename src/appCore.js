@@ -254,8 +254,20 @@ class AppCore {
             e.reply('team-status-data', res);
         });
         ipcMain.on('fetch-history-data', async (e, a) => {
-            const res = await checkinService._get({ action: 'get_productivity_history', ...a }).catch(err => ({ success: false, message: err.message }));
-            e.reply('history-data-result', res);
+            console.log('[Core] 管理員請求歷史數據:', JSON.stringify(a));
+            try {
+                const res = await checkinService._get({ action: 'get_productivity_history', ...a });
+                if (res && res.success) {
+                    const count = res.data?.daily?.length || 0;
+                    console.log(`[Core] 歷史數據獲取成功, 共 ${count} 筆紀錄`);
+                } else {
+                    console.warn('[Core] 歷史數據獲取失敗:', res?.message);
+                }
+                e.reply('history-data-result', res);
+            } catch (err) {
+                console.error('[Core] 歷史數據請求崩潰:', err.message);
+                e.reply('history-data-result', { success: false, message: err.message });
+            }
         });
     }
 
@@ -319,20 +331,50 @@ class AppCore {
     async restartServices() {
         log.info('[Core] 準備執行熱重啟...');
 
-        // 1. 停止服務
-        if (this.services.monitorService) this.services.monitorService.stop();
-        if (this.services.reminderService) this.services.reminderService.stop();
-        if (this.services.storageService) await this.services.storageService.close();
+        // [v1.8.9b Safety] 防自殺補丁：暫時攔截退出指令，防止舊版 destroy() 時誤殺進程
+        const originalProcessExit = process.exit;
+        const originalAppExit = app.exit;
+        const originalAppQuit = app.quit;
+        process.exit = () => { log.warn('[Core] 攔截到熱重啟期間的 process.exit() 請求'); };
+        app.exit = () => { log.warn('[Core] 攔截到熱重啟期間的 app.exit() 請求'); };
+        app.quit = () => { log.warn('[Core] 攔截到熱重啟期間的 app.quit() 請求'); };
 
-        // 2. 清除計時器
-        for (const k in this.timers) clearInterval(this.timers[k]);
-        this.timers = {};
+        try {
+            // 1. 停止服務
+            if (this.services.monitorService) this.services.monitorService.stop();
+            if (this.services.reminderService) this.services.reminderService.stop();
+            if (this.services.storageService) await this.services.storageService.close();
 
-        // 3. 銷毀 UI
-        if (this.services.trayManager) this.services.trayManager.destroy();
+            // 2. 清除計時器
+            for (const k in this.timers) clearInterval(this.timers[k]);
+            this.timers = {};
 
-        // 4. 重啟初始化
-        return await this.init();
+            // 3. 銷毀 UI
+            if (this.services.trayManager) {
+                try {
+                    this.services.trayManager.destroy();
+                } catch (e) {
+                    log.error('[Core] 托盤銷毀出錯 (不影響重啟):', e);
+                }
+            }
+
+            // 4. 重啟初始化
+            const success = await this.init();
+
+            // [v1.8.9b Safety] 恢復原始退出指令
+            process.exit = originalProcessExit;
+            app.exit = originalAppExit;
+            app.quit = originalAppQuit;
+
+            return success;
+        } catch (err) {
+            log.error('[Core] 熱重啟失敗:', err);
+            // 失敗時還是要恢復，否則程式會無法關閉
+            process.exit = originalProcessExit;
+            app.exit = originalAppExit;
+            app.quit = originalAppQuit;
+            return false;
+        }
     }
 
     /**

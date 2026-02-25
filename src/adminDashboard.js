@@ -1,5 +1,6 @@
-const { BrowserWindow, ipcMain, screen } = require('electron');
+const { BrowserWindow, ipcMain, screen, app } = require('electron');
 const path = require('path');
+const fs = require('fs');
 
 class AdminDashboard {
     constructor(configManager) {
@@ -33,7 +34,21 @@ class AdminDashboard {
             autoHideMenuBar: true
         });
 
-        this.window.loadFile(path.join(__dirname, 'adminDashboard.html'));
+        // [v1.8.9b Fix] 智慧路徑定位：優先尋找補丁(app_patches)夾層中的 HTML
+        let uiPath = path.join(__dirname, 'adminDashboard.html');
+        const patchUiPath = path.join(app.getPath('userData'), 'app_patches', 'src', 'adminDashboard.html');
+
+        if (fs.existsSync(patchUiPath)) {
+            uiPath = patchUiPath;
+            console.log('[AdminDashboard] 使用補丁路徑載入 UI:', uiPath);
+        } else {
+            console.log('[AdminDashboard] 使用原始路徑載入 UI:', uiPath);
+        }
+
+        this.window.loadFile(uiPath);
+
+        // 如果需要偵錯，可以暫時取消註解
+        // this.window.webContents.openDevTools();
     }
 
     _stopAutoUpdate() { }

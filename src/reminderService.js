@@ -140,10 +140,17 @@ class ReminderService {
                 // [v1.2] 儲存今日狀態
                 this._saveTodayStatus();
 
-                // 強制關閉發送該 IPC 請求的視窗（解決孤兒視窗無法關閉的問題）
+                // 強制關閉發送該 IPC 請求的視窗
+                // [v1.8.9b Fix] 避開關閉「詳細統計」視窗，只關閉提醒通知視窗
                 const win = BrowserWindow.fromWebContents(event.sender);
                 if (win && !win.isDestroyed()) {
-                    win.close();
+                    const title = win.getTitle();
+                    if (title !== '添心生產力助手 - 詳細統計' && title !== '管理員報表中心') {
+                        win.close();
+                    } else {
+                        // 如果是統計視窗，則發送訊息通知其刷新 UI（如果有的話）
+                        win.webContents.send('reminder-status-updated', reminderId);
+                    }
                 }
 
                 // 如果正好是我們最後追蹤的視窗，順便清空參考
