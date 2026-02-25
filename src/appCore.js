@@ -150,7 +150,7 @@ class AppCore {
     handleWorkInfoUpdate(workInfo) {
         if (!workInfo) return;
         const { configManager, reminderService } = this.services;
-        const today = new Date().toISOString().split('T')[0];
+        const today = this._getTodayStr(); // 改用本地日期，避免 UTC 時差 (08:00 AM 重置問題)
         const updatedInfo = { ...workInfo, date: today };
         configManager.updateWorkInfo(updatedInfo);
 
@@ -198,7 +198,7 @@ class AppCore {
         // 每 15 分鐘檢查一次打卡提示與【跨天重置】
         this.timers.checkinCheck = setInterval(() => {
             const now = new Date();
-            const todayStr = now.toISOString().split('T')[0];
+            const todayStr = this._getTodayStr(); // 改用本地日期
             const wi = configManager.getTodayWorkInfo();
 
             // [跨天重置邏輯] v1.8.9b: 僅在日期更換且時間已過早上 7 點時重置
@@ -209,8 +209,10 @@ class AppCore {
             }
 
             const hour = now.getHours();
+            // 如果還沒打卡，且在工作時間內 (08~18)，才發送提醒
             if (hour >= 8 && hour <= 18 && (!wi || !wi.checkedIn)) {
                 const r = reminderService.reminders.find(x => x.id === 'checkin_reminder');
+                // 確保 fireReminder 內有 completed 檢查
                 if (r) reminderService.fireReminder(r, reminderService._formatDate(now));
             }
         }, 15 * 60 * 1000);
@@ -384,6 +386,17 @@ class AppCore {
         log.info('[Core] 執行全程序重啟 (Relaunch)...');
         app.relaunch();
         app.exit(0);
+    }
+
+    /**
+     * 取得本地日期字串 (YYYY-MM-DD)
+     */
+    _getTodayStr() {
+        const now = new Date();
+        const y = now.getFullYear();
+        const m = String(now.getMonth() + 1).padStart(2, '0');
+        const d = String(now.getDate()).padStart(2, '0');
+        return `${y}-${m}-${d}`;
     }
 }
 
