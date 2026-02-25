@@ -21,6 +21,7 @@ class TrayManager {
     this.tray = null;
     this.statsWindow = null;
     this.updateInterval = null;
+    this.lastPermissionCheck = 0; // [v1.8.9] 權限補齊冷卻時間
 
     // 監聽前端刷新請求
     ipcMain.on('refresh-stats', (event, options = {}) => {
@@ -132,14 +133,18 @@ class TrayManager {
 
     let boundEmployee = this.configManager.getBoundEmployee();
 
-    // [v2.2.8.2] 若本地綁定資料缺少或為 0 的權限，嘗試從後端補齊（讓「分類管理／管理員面板」正確顯示）
-    const needRefreshPermission = boundEmployee && (
+    // [v1.8.9] 降低權限補齊頻率 (冷卻時間 10 分鐘)
+    const now = Date.now();
+    const isCoolingDown = (now - this.lastPermissionCheck) < 10 * 60 * 1000;
+    const needRefreshPermission = !isCoolingDown && boundEmployee && (
       boundEmployee.permission == null ||
       boundEmployee.permission === undefined ||
       boundEmployee.permission === '' ||
       Number(boundEmployee.permission) === 0
     );
-    if (needRefreshPermission && this.checkinService) {
+
+    if (needRefreshPermission && this.checkinService && !status.isBoss) {
+      this.lastPermissionCheck = now;
       try {
         let permission = null;
         let group = boundEmployee.group;
@@ -286,7 +291,7 @@ class TrayManager {
         label: '📊 管理員面板',
         click: () => {
           if (this.adminDashboard) {
-            this.adminDashboard.show(true);
+            this.adminDashboard.show();
           } else {
             console.error('[Tray] AdminDashboard not initialized');
           }
@@ -1005,8 +1010,7 @@ class TrayManager {
       this.tray = null;
     }
 
-    // 強行結束進程，確保不會殘留背景
-    process.exit(0);
+    // [v1.8.9] 移除非預期的 process.exit(0)，修復熱更新導致程式直接消失的 BUG
   }
 }
 

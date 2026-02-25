@@ -7,10 +7,9 @@ const { Notification, dialog, powerMonitor, BrowserWindow, screen } = require('e
 let activeWin = null;
 
 class MonitorService {
-    constructor(storageService, classifierService, checkinService) {
+    constructor(storageService, classifierService) {
         this.storageService = storageService;
         this.classifierService = classifierService;
-        this.checkinService = checkinService; // [v2026.1 新增] Heartbeat dependency
 
         this.isRunning = false;
 
@@ -59,37 +58,6 @@ class MonitorService {
         console.log('[Monitor] 監測服務已建立');
     }
 
-    // [v2026.1 新增] 啟動心跳回報
-    startHeartbeat() {
-        if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
-
-        // 初始發送
-        this._sendHeartbeat();
-
-        // 每 5 分鐘發送一次
-        this.heartbeatInterval = setInterval(() => {
-            this._sendHeartbeat();
-        }, 5 * 60 * 1000);
-    }
-
-    async _sendHeartbeat() {
-        if (!this.storageService) return; // Note: monitor doesn't hold checkinService directly usually? 
-        // Wait, MonitorService receives `storageService` and `classifierService`. 
-        // Where is checkinService? 
-        // MonitorService doesn't seem to have checkinService in constructor. 
-        // I need to check main.js to see if I need to pass checkinService to MonitorService OR send via IPC/Event.
-        // Actually, in main.js: monitorService = new MonitorService(storageService, classifierService);
-        // It does NOT have checkinService.
-        // I must add checkinService to MonitorService constructor or use a callback/event.
-
-        // Let's assume for now I will inject checkinService into MonitorService via a setter or constructor update.
-        if (this.checkinService) {
-            const status = (this.lastCategory === 'idle' || this.lastCategory === 'lunch_break') ? 'idle' : 'work';
-            try {
-                await this.checkinService.sendHeartbeat(status, this.lastAppName, this.lastWindowTitle);
-            } catch (e) { console.error(e); }
-        }
-    }
 
     // 啟動監測
     async start() {
@@ -287,13 +255,6 @@ class MonitorService {
                 // 閒置時重設所有追蹤
                 this.resetLeisureTracking();
                 this.resetWorkTracking();
-
-                // 每 4 次取樣（約 1 分鐘）輸出一次閒置日誌
-                if (this.sampleCount % 4 === 0) {
-                    console.log(`[Monitor] 💤 閒置中 (${Math.floor(idleTime / 60)} 分鐘, 原類型: ${classification.label})`);
-                }
-
-                this._sendHeartbeat(); // [v2026.1 新增] 狀態改變(進入閒置)時立即發送
 
                 return;
             }

@@ -51,8 +51,7 @@ class AppCore {
 
             this.services.monitorService = new MonitorService(
                 this.services.storageService,
-                this.services.classifierService,
-                this.services.checkinService
+                this.services.classifierService
             );
 
             this.services.setupWindow = new SetupWindow(this.services.configManager, this.services.checkinService);
@@ -61,7 +60,7 @@ class AppCore {
             this.services.reminderService = new ReminderService(this.services.configManager, this.services.monitorService);
             this.services.reminderService.start();
 
-            this.services.adminDashboard = new AdminDashboard(this.services.configManager, this.services.checkinService);
+            this.services.adminDashboard = new AdminDashboard(this.services.configManager);
 
             // 3. 托盤初始化
             const setupWindowFn = (type) => this.services.setupWindow.createWindow(type);
@@ -151,7 +150,9 @@ class AppCore {
     handleWorkInfoUpdate(workInfo) {
         if (!workInfo) return;
         const { configManager, reminderService } = this.services;
-        configManager.updateWorkInfo(workInfo);
+        const today = new Date().toISOString().split('T')[0];
+        const updatedInfo = { ...workInfo, date: today };
+        configManager.updateWorkInfo(updatedInfo);
 
         if (workInfo.checkedIn && reminderService?.todayStatus) {
             const tr = reminderService.todayStatus['checkin_reminder'];
@@ -175,21 +176,42 @@ class AppCore {
     startScheduledTasks() {
         const { checkinService, configManager, storageService, reminderService } = this.services;
 
-        // 每 1 小時刷新一次打卡資訊
+        // 打卡資訊刷新邏輯 (v1.8.9 優化)
+        // 未打卡時每 10 分鐘檢查一次，一旦打卡成功則停止今日輪詢
         this.timers.refresh = setInterval(async () => {
-            try {
-                const wi = await checkinService.refreshWorkInfo();
-                this.handleWorkInfoUpdate(wi);
-            } catch (e) { }
-        }, 60 * 60 * 1000);
-
-        // 每 15 分鐘檢查一次打卡補提示
-        this.timers.checkinCheck = setInterval(() => {
             const wi = configManager.getTodayWorkInfo();
-            const hour = new Date().getHours();
+            const now = new Date();
+            const hour = now.getHours();
+
+            // 如果本地已經記錄「今日已打卡」，或者還沒到早上 7 點 (跨日加班期)，不發送請求
+            if ((wi && wi.checkedIn) || hour < 7) {
+                return;
+            }
+
+            try {
+                // console.log('[Core] 尚未偵測到打卡，進行 10 分鐘例行檢查...');
+                const newWi = await checkinService.refreshWorkInfo();
+                this.handleWorkInfoUpdate(newWi);
+            } catch (e) { }
+        }, 10 * 60 * 1000); // 10 分鐘一次
+
+        // 每 15 分鐘檢查一次打卡提示與【跨天重置】
+        this.timers.checkinCheck = setInterval(() => {
+            const now = new Date();
+            const todayStr = now.toISOString().split('T')[0];
+            const wi = configManager.getTodayWorkInfo();
+
+            // [跨天重置邏輯] v1.8.9b: 僅在日期更換且時間已過早上 7 點時重置
+            if (wi && wi.date && wi.date !== todayStr && now.getHours() >= 7) {
+                console.log(`[Core] 檢測到新工作日 (${todayStr})，執行打卡記錄重置...`);
+                configManager.setTodayWorkInfo(null);
+                return;
+            }
+
+            const hour = now.getHours();
             if (hour >= 8 && hour <= 18 && (!wi || !wi.checkedIn)) {
                 const r = reminderService.reminders.find(x => x.id === 'checkin_reminder');
-                if (r) reminderService.fireReminder(r, reminderService._formatDate(new Date()));
+                if (r) reminderService.fireReminder(r, reminderService._formatDate(now));
             }
         }, 15 * 60 * 1000);
 
@@ -311,6 +333,15 @@ class AppCore {
 
         // 4. 重啟初始化
         return await this.init();
+    }
+
+    /**
+     * 徹底重啟程式 (用於重大更新或修復)
+     */
+    fullRestart() {
+        log.info('[Core] 執行全程序重啟 (Relaunch)...');
+        app.relaunch();
+        app.exit(0);
     }
 }
 
