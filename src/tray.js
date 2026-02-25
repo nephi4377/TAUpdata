@@ -22,13 +22,19 @@ class TrayManager {
     this.statsWindow = null;
     this.updateInterval = null;
     this.lastPermissionCheck = 0; // [v1.8.9] 權限補齊冷卻時間
-
-    // 監聽前端刷新請求
-    ipcMain.on('refresh-stats', (event, options = {}) => {
-      this.showStatsWindow(options.isManual);
-    });
+    this._registerIpcHandlers();
 
     console.log('[Tray] 托盤管理服務已建立');
+  }
+
+  // 註冊 IPC 監聽器 (避免熱更新累積)
+  _registerIpcHandlers() {
+    ipcMain.removeAllListeners('refresh-stats');
+    ipcMain.on('refresh-stats', (event, options = {}) => {
+      // 確保自動刷新時不調用 focus (options.isManual 設為 false)
+      const isManual = options && options.isManual === true;
+      this.showStatsWindow(isManual);
+    });
   }
 
   // 初始化托盤
