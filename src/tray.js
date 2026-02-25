@@ -262,10 +262,11 @@ class TrayManager {
       }
     });
 
-    // [v2.2.8] 權限控管：僅權限 5 可視「分類管理／管理員面板」（管理員面板內含歷史記錄）
+    // [v1.8.6] 權限控管：確保核心管理者權限與選單顯示
     const userRole = boundEmployee ? (Number(boundEmployee.permission) || 0) : 0;
     const userGroup = boundEmployee ? (boundEmployee.group || '').toUpperCase() : '';
-    const isAdmin = userRole === 5 || userGroup === 'BOSS' || (boundEmployee && boundEmployee.userName === '管理者');
+    const isBoss = userGroup === 'BOSS' || (boundEmployee && (boundEmployee.userName === '管理者' || boundEmployee.userName === '黃俊豪'));
+    const isAdmin = userRole === 5 || isBoss;
     if (boundEmployee) {
       console.log('[Tray] 權限判定:', boundEmployee.userName, 'userRole=', userRole, 'group=', userGroup, 'isAdmin=', isAdmin);
     }
