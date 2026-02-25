@@ -18,10 +18,11 @@ class AdminDashboard {
             return;
         }
 
-        this._createWindow(skipLogin);
+        this.skipLoginNext = skipLogin;
+        this._createWindow();
     }
 
-    _createWindow(skipLogin = false) {
+    _createWindow() {
         const primaryDisplay = screen.getPrimaryDisplay();
         const { width, height } = primaryDisplay.workAreaSize;
 
@@ -38,13 +39,13 @@ class AdminDashboard {
             autoHideMenuBar: true
         });
 
-        this._loadUI();
+        // [v1.8.6.1] 解決通信 Race Condition：改用一次性 Handle 讓 Renderer 主動索取權限
+        ipcMain.removeHandler('check-skip-login');
+        ipcMain.handleOnce('check-skip-login', () => {
+            return this.skipLoginNext;
+        });
 
-        if (skipLogin) {
-            this.window.webContents.on('did-finish-load', () => {
-                this.window.webContents.send('auto-login-success');
-            });
-        }
+        this._loadUI();
     }
 
     _loadUI() {
@@ -177,10 +178,16 @@ class AdminDashboard {
         function verifyPassword() {
             ipcRenderer.send('admin-login-verify', document.getElementById('password-input').value);
         }
-        ipcRenderer.on('admin-login-result', (e, success) => {
-            success ? handleLoginSuccess() : (document.getElementById('login-msg').innerText = '密碼錯誤');
-        });
         ipcRenderer.on('auto-login-success', handleLoginSuccess);
+        
+        // [v1.8.7] 視窗就緒後主動詢問是否跳過登入，解決通信時機偏差 (Race Condition)
+        window.addEventListener('load', async () => {
+            const shouldSkip = await ipcRenderer.invoke('check-skip-login');
+            if (shouldSkip) {
+                console.log('Detected auto-login signal, entering...');
+                handleLoginSuccess();
+            }
+        });
 
         function handleLoginSuccess() {
             document.getElementById('login-overlay').style.display = 'none';
