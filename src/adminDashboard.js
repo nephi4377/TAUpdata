@@ -8,17 +8,12 @@ class AdminDashboard {
         this.window = null;
     }
 
-    show(skipLogin = false) {
+    show() {
         if (this.window && !this.window.isDestroyed()) {
             this.window.show();
             this.window.focus();
-            if (skipLogin) {
-                this.window.webContents.send('auto-login-success');
-            }
             return;
         }
-
-        this.skipLoginNext = skipLogin;
         this._createWindow();
     }
 
@@ -37,12 +32,6 @@ class AdminDashboard {
                 contextIsolation: false
             },
             autoHideMenuBar: true
-        });
-
-        // [v1.8.6.1] 解決通信 Race Condition：改用一次性 Handle 讓 Renderer 主動索取權限
-        ipcMain.removeHandler('check-skip-login');
-        ipcMain.handleOnce('check-skip-login', () => {
-            return this.skipLoginNext;
         });
 
         this._loadUI();
@@ -97,11 +86,6 @@ class AdminDashboard {
         .modal-header { padding: 20px; border-bottom: 1px solid #f0f0f0; display: flex; justify-content: space-between; align-items: center; background: #fafafa; }
         .modal-body { padding: 24px; overflow-y: auto; line-height: 1.8; white-space: pre-wrap; font-size: 15px; color: #444; }
 
-        #login-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(255,255,255,0.9); backdrop-filter: blur(8px); display: flex; justify-content: center; align-items: center; z-index: 1000; }
-        .login-box { background: white; padding: 40px; border-radius: 16px; width: 340px; box-shadow: 0 20px 40px rgba(0,0,0,0.1); text-align: center; }
-        .login-box input { width: 100%; padding: 12px; margin: 16px 0; border: 1px solid #d9d9d9; border-radius: 8px; text-align: center; }
-        .login-box button { width: 100%; padding: 12px; background: var(--primary-color); color: white; border: none; border-radius: 8px; font-size: 16px; cursor: pointer; }
-
         .text-danger { color: var(--error-color); font-weight: 600; }
         .text-success { color: var(--success-color); font-weight: 600; }
         .scrollbar::-webkit-scrollbar { width: 6px; }
@@ -109,16 +93,6 @@ class AdminDashboard {
     </style>
 </head>
 <body>
-    <div id="login-overlay">
-        <div class="login-box">
-            <div style="font-size: 40px; margin-bottom: 12px;">🛡️</div>
-            <h3>管理員登入</h3>
-            <input type="password" id="password-input" placeholder="••••••••" onkeyup="if(event.key==='Enter') verifyPassword()">
-            <button onclick="verifyPassword()">安全登入</button>
-            <div id="login-msg" style="color: var(--error-color); margin-top: 16px;"></div>
-        </div>
-    </div>
-
     <div id="modal-overlay" onclick="closeModal()">
         <div class="modal-box" onclick="event.stopPropagation()">
             <div class="modal-header">
@@ -132,7 +106,8 @@ class AdminDashboard {
         </div>
     </div>
 
-    <div class="container" style="display: none; opacity: 0;" id="main-content">
+    <!-- v1.8.8 已移除 login-overlay 與密碼門檻 -->
+    <div class="container" id="main-content">
         <div class="header">
             <div class="title">管理員報表中心 🚀</div>
             <div id="status-text" style="font-size: 13px; color: var(--text-secondary);">顯示當前篩選範圍內全部概觀</div>
@@ -175,28 +150,11 @@ class AdminDashboard {
         let rawData = null;
         let selectedKey = null;
 
-        function verifyPassword() {
-            ipcRenderer.send('admin-login-verify', document.getElementById('password-input').value);
-        }
-        ipcRenderer.on('auto-login-success', handleLoginSuccess);
-        
-        // [v1.8.7] 視窗就緒後主動詢問是否跳過登入，解決通信時機偏差 (Race Condition)
-        window.addEventListener('load', async () => {
-            const shouldSkip = await ipcRenderer.invoke('check-skip-login');
-            if (shouldSkip) {
-                console.log('Detected auto-login signal, entering...');
-                handleLoginSuccess();
-            }
-        });
-
-        function handleLoginSuccess() {
-            document.getElementById('login-overlay').style.display = 'none';
-            const content = document.getElementById('main-content');
-            content.style.display = 'block';
-            setTimeout(() => content.style.opacity = '1', 50);
+        // [v1.8.8] 啟動即載入
+        window.addEventListener('load', () => {
             initDefaults();
             loadHistory();
-        }
+        });
 
         function initDefaults() {
             const today = new Date().toISOString().split('T')[0];
@@ -266,7 +224,6 @@ class AdminDashboard {
                 if (r.anomalies?.includes('high_leisure')) tags += '<span class="tag tag-warning">高休閒</span>';
                 const isSelected = selectedKey === i;
                 
-                // [v1.8.4 FIX] 改用 encodeURIComponent 處理跳脫問題，並強制轉義單引號，避免 inline onClick 參數解析引發 Syntax Error
                 const cleanDet = encodeURIComponent(r.detailText || '').replace(/'/g, "%27");
 
                 let rowHtml = '<tr data-name="' + r.userName + '" class="' + (isSelected ? 'selected' : '') + ' ' + (r.anomalies?.length ? 'anomaly-row' : '') + '" onclick="focusRow(' + i + ')">';
@@ -321,9 +278,9 @@ function showDetailModal(date, name, content) {
 }
 
 function closeModal() { document.getElementById('modal-overlay').style.display = 'none'; }
-    </script >
-</body >
-</html >
+    </script>
+</body>
+</html>
     `;
         this.window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(htmlContent)}`);
     }
