@@ -14,7 +14,6 @@ class TrayManager {
     this.configManager = configManager;
     this.checkinService = checkinService || null;
     this.setupWindow = setupWindow || null;
-    this.classificationWindow = classificationWindow || null;
     this.reminderService = reminderService || null;
     this.adminDashboard = adminDashboard || null;
 
@@ -320,7 +319,15 @@ class TrayManager {
       }
     });
 
+    template.push({
+      label: '📲 開啟網頁打卡 (LINE)',
+      click: () => {
+        shell.openExternal('https://liff.line.me/2007974938-jVxn6y37?source=hub');
+      }
+    });
+
     template.push({ type: 'separator' });
+
 
     template.push({
       label: '🔄 檢查更新',
@@ -330,13 +337,6 @@ class TrayManager {
     });
 
     template.push({ type: 'separator' });
-
-    template.push({
-      label: '❌ 結束程式',
-      click: () => {
-        this.destroy();
-      }
-    });
 
     console.log('[Tray] Menu template length:', template.length);
 
@@ -485,6 +485,17 @@ class TrayManager {
               <span class="label">預計下班</span>
               <span class="value">${workInfo && workInfo.expectedOffTime ? workInfo.expectedOffTime : '--:--'}</span>
             </div>
+          </div>
+        </div>
+      `;
+    } else {
+      checkinHtml = `
+        <div class="stats-card checkin-card" style="border: 2px dashed #f7768e;">
+          <h2><span class="icon">⚠️</span> 尚未打卡 / 尚未連結帳號</h2>
+          <div style="text-align:center; padding: 10px;">
+            <p style="margin-bottom: 5px; font-size: 14px; color: #f7768e;">💡 提示：請點擊下方連結進行打卡</p>
+            <p style="margin-bottom: 15px; font-size: 11px; color: #888;">打卡後，本視窗將自動同步狀態</p>
+            <button class="complete-btn" style="background:#7aa2f7; padding: 10px 20px;" onclick="window.reminderAPI.openLinkWindow()">📲 立即前往打卡 (LINE)</button>
           </div>
         </div>
       `;
@@ -909,21 +920,6 @@ class TrayManager {
         <div class="productivity-fill" style="width: ${productivityRate}%"></div>
       </div>
       <div class="productivity-text">生產力指數：${productivityRate}%</div>
-    </div>
-    
-    <div class="stats-card">
-      <h2><span class="icon">🌐</span> 網頁瀏覽記錄</h2>
-      ${browserHtml || '<div class="empty-state">尚無瀏覽記錄</div>'}
-    </div>
-    
-    <div class="stats-card">
-      <h2><span class="icon">📅</span> 每小時分佈</h2>
-      ${hourlyHtml || '<div class="empty-state">尚無資料</div>'}
-      <div class="legend">
-        <div class="legend-item"><span class="legend-dot work"></span>工作</div>
-        <div class="legend-item"><span class="legend-dot leisure"></span>休閒</div>
-        <div class="legend-item"><span class="legend-dot other"></span>其他</div>
-      </div>
     </div>
     
     <div class="stats-card">

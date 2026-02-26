@@ -11,5 +11,7 @@ contextBridge.exposeInMainWorld('reminderAPI', {
     // 請求刷新統計視窗
     refreshStats: () => ipcRenderer.send('refresh-stats'),
     // 監聽數據更新 (用於消滅閃動的動態 DOM 更新)
-    onUpdateStats: (callback) => ipcRenderer.on('update-stats-data', (event, data) => callback(data))
+    onUpdateStats: (callback) => ipcRenderer.on('update-stats-data', (event, data) => callback(data)),
+    // 開啟連結帳號視窗
+    openLinkWindow: () => ipcRenderer.invoke('open-link-window')
 });

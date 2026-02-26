@@ -234,7 +234,7 @@ class AppCore {
         const channels = [
             'get-status', 'pause-monitor', 'resume-monitor', 'get-hourly-stats',
             'get-top-apps', 'open-data-folder', 'admin-login-verify',
-            'fetch-team-status', 'fetch-history-data'
+            'fetch-team-status', 'fetch-history-data', 'open-link-window'
         ];
         channels.forEach(ch => ipcMain.removeHandler(ch));
         ipcMain.removeAllListeners('admin-login-verify');
@@ -249,6 +249,9 @@ class AppCore {
         ipcMain.handle('get-hourly-stats', () => storageService?.getHourlyStats());
         ipcMain.handle('get-top-apps', (e, d) => storageService?.getRecentTopApps(d || 7));
         ipcMain.handle('open-data-folder', () => shell.openPath(app.getPath('userData')));
+        ipcMain.handle('open-link-window', () => {
+            shell.openExternal('https://liff.line.me/2007974938-jVxn6y37?source=hub');
+        });
 
         ipcMain.on('admin-login-verify', (e, p) => e.reply('admin-login-result', configManager.verifyAdminPassword(p)));
         ipcMain.on('fetch-team-status', async (e) => {
@@ -345,13 +348,8 @@ class AppCore {
             // 1. 停止服務
             if (this.services.monitorService) this.services.monitorService.stop();
             if (this.services.reminderService) this.services.reminderService.stop();
-            if (this.services.storageService) await this.services.storageService.close();
 
-            // 2. 清除計時器
-            for (const k in this.timers) clearInterval(this.timers[k]);
-            this.timers = {};
-
-            // 3. 銷毀 UI
+            // 確保托盤圖示與事件監聽徹底移除
             if (this.services.trayManager) {
                 try {
                     this.services.trayManager.destroy();
@@ -360,21 +358,37 @@ class AppCore {
                 }
             }
 
-            // 4. 重啟初始化
+            if (this.services.storageService) await this.services.storageService.close();
+
+            // 2. 清除計時器
+            for (const k in this.timers) clearInterval(this.timers[k]);
+            this.timers = {};
+
+            // 3. 重啟初始化
+            log.info('[Core] 正在重新執行核心初始化 (熱更新)...');
             const success = await this.init();
+
+            if (!success) {
+                throw new Error('核心初始化失敗');
+            }
 
             // [v1.8.9b Safety] 恢復原始退出指令
             process.exit = originalProcessExit;
             app.exit = originalAppExit;
             app.quit = originalAppQuit;
 
+            log.info('[Core] 熱重啟成功生效，服務已恢復運行');
             return success;
         } catch (err) {
-            log.error('[Core] 熱重啟失敗:', err);
-            // 失敗時還是要恢復，否則程式會無法關閉
+            log.error('[Core] 熱重啟崩潰，執行熔斷回退或全程序重啟:', err);
+
+            // 恢復原始退出指令以便執行 relaunch
             process.exit = originalProcessExit;
             app.exit = originalAppExit;
             app.quit = originalAppQuit;
+
+            // 如果 init 失敗，嘗試全程序重啟以確保系統可用
+            this.fullRestart();
             return false;
         }
     }

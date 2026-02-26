@@ -39,13 +39,22 @@ class CheckinService {
                 headers: { 'Content-Type': 'application/json' }
             });
 
+            if (!response.ok) {
+                throw new Error(`HTTP 錯誤! 狀態碼: ${response.status}`);
+            }
+
             // GAS 的 doGet 會回傳 302 redirect，fetch 預設會自動跟隨
             const data = await response.json();
-            console.log(`[CheckinService] GET ← ${params.action}: ${data.success ? '成功' : data.message}`);
-            return data;
+
+            if (data && typeof data === 'object') {
+                console.log(`[CheckinService] GET ← ${params.action}: ${data.success ? '成功' : (data.message || '無訊息')}`);
+                return data;
+            } else {
+                throw new Error('回傳格式錯誤 (非 JSON 物件)');
+            }
         } catch (error) {
             console.error(`[CheckinService] GET 失敗 (${params.action}):`, error.message);
-            return { success: false, message: `網路錯誤: ${error.message}` };
+            return { success: false, message: `網路連線或 API 異常: ${error.message}` };
         }
     }
 
@@ -61,12 +70,21 @@ class CheckinService {
                 redirect: 'follow'
             });
 
+            if (!response.ok) {
+                throw new Error(`HTTP 錯誤! 狀態碼: ${response.status}`);
+            }
+
             const data = await response.json();
-            console.log(`[CheckinService] POST ← ${payload.action}: ${data.success ? '成功' : data.message}`);
-            return data;
+
+            if (data && typeof data === 'object') {
+                console.log(`[CheckinService] POST ← ${payload.action}: ${data.success ? '成功' : (data.message || '無訊息')}`);
+                return data;
+            } else {
+                throw new Error('回傳格式錯誤 (非 JSON 物件)');
+            }
         } catch (error) {
             console.error(`[CheckinService] POST 失敗 (${payload.action}):`, error.message);
-            return { success: false, message: `網路錯誤: ${error.message}` };
+            return { success: false, message: `傳送失敗: ${error.message}` };
         }
     }
 
