@@ -357,19 +357,20 @@ class TrayManager {
       label: '🗓️ 設定 Apple 行事曆連結',
       click: async () => {
         const url = await this._promptIcloudUrl();
-        if (url !== null) {
-          // 有些人貼上時會帶 webcal://，我們轉回 https:// 讓 axios 能用
-          let cleanUrl = url.trim();
-          if (cleanUrl.startsWith('webcal://')) {
-            cleanUrl = 'https://' + cleanUrl.substring(9);
-          }
-          this.configManager.setIcloudCalendarUrl(cleanUrl);
-          this.monitorService.showToast('設定成功', 'Apple 行事曆連結已存檔，將在下次同步時生效。');
-          // 立刻呼叫 reminderService 重啟
-          if (this.reminderService) {
-            this.reminderService.stop();
-            this.reminderService.start();
-          }
+        // 強制格式轉換
+        let cleanUrl = url.trim();
+        if (cleanUrl.startsWith('webcal://')) {
+          cleanUrl = 'https://' + cleanUrl.substring(9);
+        } else if (!cleanUrl.startsWith('http')) {
+          cleanUrl = 'https://' + cleanUrl;
+        }
+
+        this.configManager.setIcloudCalendarUrl(cleanUrl);
+        this.monitorService.showToast('設定成功', 'Apple 行事曆連結已存檔。');
+
+        if (this.reminderService) {
+          this.reminderService.stop();
+          this.reminderService.start();
         }
       }
     });
@@ -602,16 +603,30 @@ class TrayManager {
     if (localTasks) {
       let taskList = '';
       for (const item of localTasks) {
-        let statusClass = item.status === 'completed' ? 'completed' : 'pending';
-        let statusText = item.status === 'completed'
-          ? `<button class="complete-btn" style="background:#888;" onclick="toggleTaskStatus(${item.id}, 'pending')">↩️</button>`
-          : `<button class="complete-btn" onclick="toggleTaskStatus(${item.id}, 'completed')">✅</button>`;
+        let isComp = item.status === 'completed';
+        let statusClass = isComp ? 'completed' : 'pending';
+        let statusBtn = isComp
+          ? `<button class="complete-btn" style="background:#555; color:#999;" onclick="toggleTaskStatus(${item.id}, 'pending')">↩️</button>`
+          : `<button class="complete-btn" style="background:#4caf50;" onclick="toggleTaskStatus(${item.id}, 'completed')">✅</button>`;
+
+        let titleSafe = this.escapeHtml(item.title);
+
+        // 取得標籤 (如果有時間資訊)
+        let timeTag = '';
+        if (item.due_date && item.due_time) {
+          let label = '⏰ ';
+          if (item.repeat_type === 'daily') label = '🔄 ';
+          timeTag = `<span class="time-tag">${label} ${item.due_date} ${item.due_time}</span>`;
+        }
 
         taskList += `
           <div class="reminder-row ${statusClass}">
-            <span class="reminder-icon">📝</span>
-            <span class="reminder-title">${this.escapeHtml(item.title)}</span>
-            <span class="reminder-status">${statusText}</span>
+            <span class="reminder-icon">📌</span>
+            <div style="flex:1; display:flex; flex-direction:column;">
+              <span class="reminder-title">${titleSafe}</span>
+              ${timeTag}
+            </div>
+            <span class="reminder-status">${statusBtn}</span>
             <span class="reminder-action"><button class="complete-btn" style="background:#f7768e; margin-left:5px;" onclick="deleteTask(${item.id})">🗑️</button></span>
           </div>
         `;
@@ -620,34 +635,36 @@ class TrayManager {
       localTasksHtml = `
         <div class="stats-card">
             <div class="reminder-panel">
-              <h3 style="margin-top:0; font-size:16px; color:#bb9af7;">📅 進階提醒事項助手</h3>
+              <h3 style="margin-top:0; font-size:16px; color:#bb9af7; display:flex; align-items:center; gap:8px;">
+                <span style="font-size:20px;">📅</span> 進階提醒事項助手
+              </h3>
               <div class="reminder-input-container">
-                <input type="text" id="local-task-input" placeholder="例如：下午二點面談..." maxlength="50">
-                <div class="reminder-date-time-row">
-                  <span>⏰ 日期:</span>
-                  <input type="date" id="reminder-date" class="reminder-date-input">
-                  <span>時間:</span>
-                  <input type="time" id="reminder-time" class="reminder-time-input">
+                <input type="text" id="local-task-input" placeholder="例如：下午二點面談..." maxlength="50" style="width:100%; padding:10px; background:#2a2a3e; border:1px solid #444; border-radius:6px; color:white; margin-bottom:10px;">
+                <div class="reminder-date-time-row" style="display:flex; gap:10px; margin-bottom:10px; align-items:center; font-size:13px;">
+                  <span>🗓️ 日期:</span>
+                  <input type="date" id="reminder-dt" class="reminder-date-input" style="background:#2a2a3e; border:1px solid #444; border-radius:4px; color:white; padding:4px;">
+                  <span>⏰ 時間:</span>
+                  <input type="time" id="reminder-tm" class="reminder-time-input" style="background:#2a2a3e; border:1px solid #444; border-radius:4px; color:white; padding:4px;">
                 </div>
-                <div class="reminder-date-time-row">
+                <div class="reminder-date-time-row" style="display:flex; gap:10px; margin-bottom:12px; align-items:center; font-size:13px;">
                   <span>🔔 提前:</span>
-                  <select id="reminder-lead" class="reminder-date-input" style="padding:4px;">
+                  <select id="reminder-ld" style="background:#2a2a3e; border:1px solid #444; border-radius:4px; color:white; padding:4px;">
                     <option value="0">準時</option>
-                    <option value="5">5 分鐘</option>
-                    <option value="10" selected>10 分鐘</option>
-                    <option value="30">30 分鐘</option>
+                    <option value="5">5 分</option>
+                    <option value="10" selected>10 分</option>
+                    <option value="30">30 分</option>
                   </select>
                   <span>🔄 重複:</span>
-                  <select id="reminder-repeat" class="reminder-date-input" style="padding:4px;">
+                  <select id="reminder-rp" style="background:#2a2a3e; border:1px solid #444; border-radius:4px; color:white; padding:4px;">
                     <option value="none" selected>不重複</option>
                     <option value="daily">每天</option>
                     <option value="weekly">每週</option>
                   </select>
                 </div>
-                <button class="complete-btn" style="width:100%; height:38px; font-size:15px;" onclick="addLocalTask(document.getElementById('local-task-input').value, document.getElementById('reminder-date').value, document.getElementById('reminder-time').value, document.getElementById('reminder-lead').value, document.getElementById('reminder-repeat').value)">➕ 新增進階提醒</button>
+                <button class="complete-btn" style="width:100%; height:42px; font-size:15px; background:linear-gradient(135deg, #4caf50, #8bc34a); color:white; border:none; border-radius:8px; cursor:pointer; font-weight:bold;" onclick="doAddLocalTask()">➕ 新增進階提醒</button>
               </div>
-              <div id="local-tasks-list">
-                <div class="empty-state">讀取中...</div>
+              <div id="local-tasks-list" style="margin-top:15px;">
+                ${taskList || '<div class="empty-state">目前沒有進階提醒</div>'}
               </div>
             </div>
         </div>
@@ -1055,12 +1072,15 @@ class TrayManager {
     // 初始化預設日期 (今天)
     document.addEventListener('DOMContentLoaded', () => {
         const dateInput = document.getElementById('reminder-date');
-        if (dateInput) {
+        const dInput = document.getElementById('reminder-dt');
+        const tInput = document.getElementById('reminder-tm');
+        if (dInput && tInput) {
             const now = new Date();
-            const y = now.getFullYear();
-            const m = String(now.getMonth() + 1).padStart(2, '0');
-            const d = String(now.getDate()).padStart(2, '0');
-            dateInput.value = y + '-' + m + '-' + d;
+            const today = now.toISOString().split('T')[0];
+            const hh = String(now.getHours()).padStart(2, '0');
+            const mm = String(now.getMinutes()).padStart(2, '0');
+            dInput.value = today;
+            tInput.value = hh + ":" + mm;
         }
     });
     // [v2.0] 消滅閃動：接收 IPC 動態更新 DOM
@@ -1148,8 +1168,12 @@ class TrayManager {
     }, 60 * 1000); 
   </script>
   </head>
-<body>
+<body class="scrollbar-v2">
   <div class="container">
+    <div class="secretary-mascot">
+        <div class="secretary-avatar"></div>
+        <div class="secretary-speech">今天要加油喔！💪</div>
+    </div>
     <h1>📊 今日生產力報告</h1>
     <div style="text-align: center; color: #888; font-size: 14px; margin-top: -10px; margin-bottom: 20px;">v${this.getEffectiveVersion()}</div>
     
@@ -1337,6 +1361,10 @@ class TrayManager {
       promptWindow.loadURL(`data:text/html;charset=utf-8,\${encodeURIComponent(html)}`);
 
       const { ipcMain } = require('electron');
+      // [v1.11.7] 強行清除舊監聽器，防止熱更新導致的死結
+      ipcMain.removeAllListeners('prompt-cal-done');
+      ipcMain.removeAllListeners('prompt-cal-cancel');
+
       const doneHandler = (event, val) => {
         ipcMain.removeListener('prompt-cal-done', doneHandler);
         ipcMain.removeListener('prompt-cal-cancel', cancelHandler);
