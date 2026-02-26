@@ -362,7 +362,8 @@ class TrayManager {
 
   // 顯示詳細統計視窗
   async showStatsWindow(isManual = true) {
-    if (this.checkinService) {
+    // [v1.9.1 Fix] 僅在使用者主動開啟 (isManual=true) 時更新後端。自動刷新只更新 UI 時間。
+    if (this.checkinService && isManual) {
       this.checkinService.refreshWorkInfo().catch(err => { });
     }
 
