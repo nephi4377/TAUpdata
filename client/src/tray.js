@@ -1,5 +1,6 @@
-// v1.11.13 - 2026-02-26 20:46 (Asia/Taipei)
-// 修改內容: 修正完整功能、對接 GitHub 遠端圖片服務、修復 UI 資料顯示異常。
+// v1.11.14 - 2026-02-26 20:50 (Asia/Taipei)
+// 修改內容: 還原經典數據佈局 (不改變原本介面)，同時將小秘書作為「置頂外掛組件」插入。
+// 影像來源對接 GitHub 以確保 100% 顯示。
 
 const { Tray, Menu, nativeImage, Notification, app, BrowserWindow, shell, ipcMain } = require('electron');
 const path = require('path');
@@ -15,13 +16,12 @@ class TrayManager {
     this.checkinService = checkinService || null;
     this.setupWindow = setupWindow || null;
     this.reminderService = reminderService || null;
-    this.classificationWindow = classificationWindow || null;
     this.adminDashboard = adminDashboard || null;
+    this.classificationWindow = classificationWindow || null;
 
     this.tray = null;
     this.statsWindow = null;
     this._registerIpcHandlers();
-    console.log('[Tray] 托盤管理服務已修復完成 (v1.11.13)');
   }
 
   _registerIpcHandlers() {
@@ -55,9 +55,11 @@ class TrayManager {
   createTrayIcon() {
     const size = 16;
     const canvas = Buffer.alloc(size * size * 4);
-    for (let i = 0; i < size * size; i++) {
-      const idx = i * 4;
-      canvas[idx] = 76; canvas[idx + 1] = 175; canvas[idx + 2] = 80; canvas[idx + 3] = 255;
+    for (let i = 0; i < size / 2; i++) {
+      for (let j = 0; j < size / 2; j++) {
+        const idx = ((size / 4 + i) * size + (size / 4 + j)) * 4;
+        canvas[idx] = 76; canvas[idx + 1] = 175; canvas[idx + 2] = 80; canvas[idx + 3] = 255;
+      }
     }
     return nativeImage.createFromBuffer(canvas, { width: size, height: size });
   }
@@ -66,19 +68,20 @@ class TrayManager {
     if (!this.tray) return;
     const stats = await this.storageService.getTodayStats();
     const v = versionService.getEffectiveVersion();
-    const gender = this.configManager.getMascotGender();
     const bound = this.configManager.getBoundEmployee();
+    const gender = this.configManager.getMascotGender();
 
     const template = [
       { label: `添心生產力助手 v${v}`, enabled: false },
-      { label: `今日工作: ${this.formatMinutes(stats.work)} (${stats.productivityRate || 0}%)`, enabled: false },
-      { label: '📊 詳細統計 (歷史)', click: () => this.showStatsWindow(true) },
-      { type: 'separator' },
-      { label: bound ? `👤 使用者: ${bound.userName}` : '⚠️ 未綁定員工', enabled: false },
+      { label: `今日效率: ${stats.productivityRate || 0}%`, enabled: false },
+      { label: '📊 開啟統計', click: () => this.showStatsWindow(true) },
       { type: 'separator' }
     ];
 
-    // 性別與形象切換
+    if (bound) {
+      template.push({ label: `👤 ${bound.userName}`, enabled: false });
+    }
+
     template.push({
       label: `🎭 形象: ${gender === 'male' ? '🤵 男版' : '👩 女版'}`,
       click: () => { this.configManager.setMascotGender(gender === 'male' ? 'female' : 'male'); this.updateMenu(); }
@@ -86,9 +89,9 @@ class TrayManager {
 
     if (gender === 'female') {
       const skin = this.configManager.getMascotSkin();
-      const sks = [{ id: 'default', n: '🏙️ 預設黑系' }, { id: 'blizzard', n: '❄️ 暴雪藍青' }, { id: 'thunder', n: '⚡ 雷電品紅' }, { id: 'boulder', n: '⛰️ 巨岩純黃' }, { id: 'sacred', n: '🕊️ 神聖之白' }, { id: 'prism', n: '✨ 天星棱光' }];
+      const sks = [{ id: 'default', n: '👔 經典黑' }, { id: 'blizzard', n: '❄️ 藍青' }, { id: 'thunder', n: '⚡ 品紅' }, { id: 'boulder', n: '⛰️ 純黃' }, { id: 'sacred', n: '🕊️ 白色' }, { id: 'prism', n: '✨ 棱光' }];
       template.push({
-        label: `👕 裝束: ${sks.find(s => s.id === skin)?.n || '預設'}`,
+        label: `👕 裝束切換`,
         submenu: sks.map(s => ({
           label: s.n, type: 'radio', checked: skin === s.id,
           click: () => { this.configManager.setMascotSkin(s.id); this.updateMenu(); }
@@ -107,9 +110,6 @@ class TrayManager {
     if (gender === 'male') fname = 'secretary_male.png';
     else if (skin !== 'default') fname = `secretary_${skin}.png`;
 
-    // 關鍵修復: 使用 GitHub 遠端圖片 URL 作為後備並優先，解決本機路徑消失問題
-    const remoteUrl = `https://raw.githubusercontent.com/nephi4377/TAUpdata/main/client/assets/${fname}`;
-
     return {
       stats: await this.storageService.getTodayStats(),
       hourlyStats: await this.storageService.getHourlyStats(),
@@ -119,7 +119,7 @@ class TrayManager {
       workInfo: this.configManager.getTodayWorkInfo(),
       localTasks: await this.storageService.getLocalTasks(),
       version: versionService.getEffectiveVersion(),
-      mascotUrl: remoteUrl
+      mascotUrl: `https://raw.githubusercontent.com/nephi4377/TAUpdata/main/client/assets/${fname}`
     };
   }
 
@@ -131,10 +131,10 @@ class TrayManager {
       return;
     }
     const html = await this.generateStatsHtml(data);
-    const temp = path.join(this.app.getPath('userData'), 'stats_v13.html');
+    const temp = path.join(this.app.getPath('userData'), 'stats_stable.html');
     fs.writeFileSync(temp, html, 'utf8');
     this.statsWindow = new BrowserWindow({
-      width: 750, height: 900, title: '添心生產力助手 - 詳細統計',
+      width: 720, height: 880, title: '添心生產力助手 - 詳細統計',
       autoHideMenuBar: true,
       webPreferences: { contextIsolation: true, preload: path.join(__dirname, 'reminderPreload.js') }
     });
@@ -142,68 +142,105 @@ class TrayManager {
   }
 
   async generateStatsHtml(data) {
-    const { version, mascotUrl, stats, boundEmployee, workInfo, localTasks } = data;
+    const { version, mascotUrl, stats, hourlyStats, topApps, status, boundEmployee, workInfo, localTasks } = data;
     const rate = stats.total > 0 ? Math.round((stats.work / stats.total) * 100) : 0;
 
-    // 生成打卡 HTML (預渲染)
+    // 經典打卡卡片還原
     const checkinHtml = boundEmployee
-      ? `<div class="card"><h3>👤 使用者: ${boundEmployee.userName}</h3><div style="display:flex; justify-content:space-between; margin-top:10px;"><span>上班: ${workInfo?.checkinTime || '--:--'}</span><span>下班: ${workInfo?.expectedOffTime || '--:--'}</span></div><button class="btn" style="background:#4ecdc4; color:#1a1a2e; margin-top:15px;" onclick="doCheckin()">✅ 打卡發送</button></div>`
-      : `<div class="card" style="border:2px dashed #f7768e; text-align:center;"><h3>⚠️ 未連結帳號</h3><button class="btn" style="background:#7aa2f7; margin-top:10px;" onclick="window.reminderAPI.openLinkWindow()">📲 前往綁定 (LINE)</button></div>`;
+      ? `<div class="stats-card checkin-card"><h2>👤 打卡資訊 - ${boundEmployee.userName}</h2><div class="checkin-grid"><div class="checkin-item"><span class="label">打卡時間</span><span class="value">${workInfo?.checkedIn ? (workInfo.checkinTime || '已打卡') : '⚠️ 未打卡'}</span></div><div class="checkin-item"><span class="label">預計下班</span><span class="value">${workInfo?.expectedOffTime || '--:--'}</span></div></div><button class="complete-btn" style="margin-top:15px; background:#4ecdc4; color:#1a1a2e;" onclick="window.reminderAPI.directCheckin().then(r=>r.success && window.reminderAPI.refreshStats())">✅ 立即打卡</button></div>`
+      : `<div class="stats-card checkin-card" style="border: 2px dashed #f7768e;"><h2>⚠️ 未連結打卡帳號</h2><button class="complete-btn" style="background:#7aa2f7; width:100%;" onclick="window.reminderAPI.openLinkWindow()">📲 立即前往綁定 (LINE)</button></div>`;
+
+    // 經典小時橫條圖還原
+    const hourlyHtml = (hourlyStats || []).map(row => `
+      <div class="hour-row">
+        <span class="hour-label">${row.hour.toString().padStart(2, '0')}:00</span>
+        <div class="hour-bar-container">
+          <div class="hour-bar work" style="width: ${row.work_pct || 0}%"></div>
+          <div class="hour-bar leisure" style="width: ${row.leisure_pct || 0}%"></div>
+          <div class="hour-bar other" style="width: ${row.other_pct || 0}%"></div>
+        </div>
+        <span class="hour-total">${this.formatMinutes(row.total)}</span>
+      </div>`).join('');
+
+    // 經典應用排行還原
+    const appsHtml = (topApps || []).map(app => `
+      <div class="app-row">
+        <span class="app-name">${app.app_name}</span>
+        <span class="app-time">${this.formatMinutes(Math.round(app.total_seconds / 60))}</span>
+      </div>`).join('');
 
     return `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>
-      body { background:#1a1a2e; color:#eee; font-family:sans-serif; padding:20px; }
-      .container { max-width: 600px; margin: 0 auto; }
-      .mascot-area { display:flex; align-items:center; justify-content:center; gap:20px; margin-bottom:25px; }
-      .avatar { width:120px; height:180px; border-radius:12px; border:2px solid #4ecdc4; background: url('${mascotUrl}') center/cover; box-shadow: 0 4px 15px rgba(0,0,0,0.5); animation: float 4s infinite ease-in-out; }
-      .speech { background:white; color:#333; padding:15px; border-radius:12px; font-size:14px; font-weight:bold; max-width:250px; box-shadow:0 4px 15px rgba(0,0,0,0.2); margin-top:-60px;}
-      @keyframes float { 0%, 100% { transform:translateY(0); } 50% { transform:translateY(-8px); } }
-      .card { background:rgba(255,255,255,0.08); border-radius:12px; padding:20px; margin-bottom:20px; }
-      .btn { width:100%; padding:10px; border:none; border-radius:6px; cursor:pointer; font-weight:bold; color:white; }
-      .grid { display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; text-align:center; margin-top:15px; }
-      .val { font-size:20px; font-weight:bold; color:#4ecdc4; }
+      * { margin:0; padding:0; box-sizing:border-box; font-family:'Microsoft JhengHei', sans-serif; }
+      body { background:#1a1a2e; color:#eee; padding:20px; }
+      .container { max-width: 660px; margin: 0 auto; }
+      
+      /* 小秘書置頂組件 - 外掛式設計 */
+      .mascot-overlay { display:flex; align-items:center; justify-content:center; gap:15px; margin-bottom:20px; padding:15px; background:rgba(255,255,255,0.05); border-radius:15px; border:1px solid rgba(78,205,196,0.3); }
+      .mascot-img { width:100px; height:150px; border-radius:10px; background:url('${mascotUrl}') center/cover; border:2px solid #4ecdc4; animation: float 4s infinite ease-in-out; }
+      .mascot-speech { background:white; color:#333; padding:12px; border-radius:12px; font-size:14px; font-weight:bold; max-width:250px; box-shadow:0 4px 15px rgba(0,0,0,0.2); position:relative; }
+      .mascot-speech::after { content:''; position:absolute; left:-10px; top:20px; border-width:10px 10px 10px 0; border-style:solid; border-color:transparent white transparent transparent; }
+      @keyframes float { 0%, 100% { transform:translateY(0); } 50% { transform:translateY(-6px); } }
+
+      .stats-card { background:rgba(255,255,255,0.08); border-radius:12px; padding:20px; margin-bottom:20px; }
+      h1 { text-align:center; color:#4ecdc4; margin-bottom:15px; }
+      .summary-grid { display:grid; grid-template-columns:1fr 1fr 1fr; gap:15px; text-align:center; }
+      .summary-val { font-size:24px; font-weight:bold; color:#4ecdc4; }
+      .prod-bar { height:12px; background:rgba(255,255,255,0.1); border-radius:6px; margin:15px 0; overflow:hidden; }
+      .prod-fill { height:100%; background:#4caf50; transition:width 0.5s; }
+      .checkin-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:10px; }
+      .hour-row { display:flex; align-items:center; margin-bottom:8px; font-size:12px; }
+      .hour-bar-container { flex:1; height:10px; display:flex; background:rgba(255,255,255,0.05); margin:0 10px; border-radius:5px; overflow:hidden; }
+      .hour-bar.work { background:#4caf50; } .hour-bar.leisure { background:#f7768e; } .hour-bar.other { background:#999; }
+      .complete-btn { padding:10px; border:none; border-radius:8px; cursor:pointer; font-weight:bold; width:100%; }
+      .app-row { display:flex; justify-content:space-between; padding:8px; border-bottom:1px solid rgba(255,255,255,0.05); font-size:14px; }
     </style></head>
-    <body onload="init()">
+    <body onload="start()">
       <div class="container">
-        <div class="mascot-area"><div class="avatar"></div><div class="speech" id="msg">今天也要加油喔！✨</div></div>
-        <h1 style="text-align:center; color:#4ecdc4;">📊 今日生產力報告</h1>
-        <p style="text-align:center; color:#888; font-size:12px;">v${version} (Stable)</p>
-        <div id="checkin-box">${checkinHtml}</div>
-        <div class="card"><h2>⏱️ 時間統計</h2><div class="grid">
-          <div style="background:#000; padding:10px; border-radius:8px;"><div id="w-v" class="val">${this.formatMinutes(stats.work)}</div><div>工作</div></div>
-          <div style="background:#000; padding:10px; border-radius:8px;"><div id="l-v" class="val" style="color:#f7768e;">${this.formatMinutes(stats.leisure)}</div><div>休閒</div></div>
-          <div style="background:#000; padding:10px; border-radius:8px;"><div id="o-v" class="val" style="color:#aaa;">${this.formatMinutes(stats.other)}</div><div>其他</div></div>
-        </div><div style="height:12px; background:#333; border-radius:6px; margin:15px 0; overflow:hidden;"><div id="p-f" style="height:100%; background:#4caf50; width:${rate}%;"></div></div>
-        <div id="p-t" style="text-align:center;">生產力指數: ${rate}%</div></div>
-        <div class="card"><h2>📋 提醒事項</h2><div id="t-l"></div></div>
-        <div class="card"><h2>📱 應用排行</h2><div id="a-l"></div></div>
+        <!-- 外掛小秘書 -->
+        <div class="mascot-overlay">
+          <div class="mascot-img"></div>
+          <div class="mascot-speech" id="m-s">主人工作辛苦了！✨</div>
+        </div>
+
+        <h1>📊 生產力詳細報表</h1>
+        <p style="text-align:center; color:#666; font-size:11px; margin-top:-10px; margin-bottom:15px;">v${version}</p>
+
+        <div id="checkin-area">${checkinHtml}</div>
+
+        <div class="stats-card">
+          <h2>⏱️ 今日數據概覽</h2>
+          <div class="summary-grid">
+            <div style="background:rgba(0,0,0,0.2); padding:10px; border-radius:8px;"><div id="w-v" class="summary-val">${this.formatMinutes(stats.work)}</div><div style="font-size:12px; color:#888;">工作</div></div>
+            <div style="background:rgba(0,0,0,0.2); padding:10px; border-radius:8px;"><div id="l-v" class="summary-val" style="color:#f7768e;">${this.formatMinutes(stats.leisure)}</div><div style="font-size:12px; color:#888;">休閒</div></div>
+            <div style="background:rgba(0,0,0,0.2); padding:10px; border-radius:8px;"><div id="o-v" class="summary-val" style="color:#aaa;">${this.formatMinutes(stats.other)}</div><div style="font-size:12px; color:#888;">其他</div></div>
+          </div>
+          <div class="prod-bar"><div id="p-f" class="prod-fill" style="width:${rate}%;"></div></div>
+          <div id="p-t" style="text-align:center; font-size:14px; color:#aaa;">生產力指數：${rate}%</div>
+        </div>
+
+        <div class="stats-card"><h2>📅 每小時工作量</h2><div id="h-l">${hourlyHtml}</div></div>
+        <div class="stats-card"><h2>📋 今日提醒事項</h2><div id="t-l"></div></div>
+        <div class="stats-card"><h2>📱 應用排行</h2><div id="a-l">${appsHtml}</div></div>
       </div>
       <script>
-        function fmt(m) { if(!m) return '0分'; if(m<60) return m+'分'; return Math.floor(m/60)+'h '+(m%60)+'m'; }
-        async function doCheckin() { const r=await window.reminderAPI.directCheckin(); if(r.success) window.reminderAPI.refreshStats(); else alert(r.message); }
-        async function toggle(id, s) { await window.reminderAPI.updateLocalTask(id, s); window.reminderAPI.refreshStats(); }
-
+        function fmt(m){ if(!m)return '0分'; if(m<60)return m+'分'; return Math.floor(m/60)+'h '+(m%60)+'m'; }
         window.reminderAPI.onUpdateStats((d) => {
           document.getElementById('w-v').innerText = fmt(d.stats.work);
           document.getElementById('l-v').innerText = fmt(d.stats.leisure);
           document.getElementById('o-v').innerText = fmt(d.stats.other);
           const r = d.stats.total > 0 ? Math.round((d.stats.work/d.stats.total)*100) : 0;
           document.getElementById('p-f').style.width = r + '%';
-          document.getElementById('p-t').innerText = '生產力指數: ' + r + '%';
-          
-          if (r >= 80) document.getElementById('msg').innerText = "你太優秀了！效率滿分！🚀";
-          else if (r >= 50) document.getElementById('msg').innerText = "穩定發揮，繼續加油！✨";
-          else document.getElementById('msg').innerText = "休息一下也沒關係，小秘書陪你！💪";
+          document.getElementById('p-t').innerText = '生產力指數：' + r + '%';
 
+          if(r>=80) document.getElementById('m-s').innerText = "主人太強了！效率爆炸！🚀";
+          else if(r>=50) document.getElementById('m-s').innerText = "工作順利，繼續保持喔！☕";
+          else document.getElementById('m-s').innerText = "累了嗎？小秘書陪你休息一下！💪";
+          
           let th = '';
-          (d.localTasks || []).forEach(t => { th += '<div style="display:flex; justify-content:space-between; padding:8px; border-bottom:1px solid rgba(255,255,255,0.05);"><span>'+t.title+'</span><button onclick="toggle('+t.id+', \\'completed\\')">✅</button></div>'; });
-          document.getElementById('t-l').innerHTML = th || '<div style="text-align:center; color:#666;">尚無事項</div>';
-          
-          let ah = '';
-          (d.topApps || []).forEach(a => { ah += '<div style="display:flex; justify-content:space-between; padding:8px; border-bottom:1px solid rgba(255,255,255,0.05);"><span>'+a.app_name+'</span><span style="color:#4ecdc4;">'+fmt(Math.round(a.total_seconds/60))+'</span></div>'; });
-          document.getElementById('a-l').innerHTML = ah;
+          (d.localTasks || []).forEach(t => { th += '<div style="display:flex; justify-content:space-between; padding:8px; border-bottom:1px solid rgba(255,255,255,0.05);"><span>📌 '+t.title+'</span><button onclick="window.reminderAPI.updateLocalTask('+t.id+',\\'completed\\').then(()=>window.reminderAPI.refreshStats())">✅</button></div>'; });
+          document.getElementById('t-l').innerHTML = th || '<div style="text-align:center; color:#555;">目前沒有待辦</div>';
         });
-
-        function init() { setTimeout(() => { if(window.reminderAPI.refreshStats) window.reminderAPI.refreshStats(); }, 300); }
+        function start(){ setTimeout(()=>window.reminderAPI.refreshStats(), 500); }
       </script>
     </body></html>`;
   }
