@@ -4,6 +4,7 @@
 const { Notification, dialog, powerMonitor, BrowserWindow, screen, app } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const https = require('https');
 
 // 動態載入 active-win（ESM 模組）
 let activeWin = null;
@@ -424,7 +425,13 @@ class MonitorService {
         } else {
             fname = 'secretary_male.png';
         }
-        const mascotUrl = `https://raw.githubusercontent.com/nephi4377/TAUpdata/master/client/assets/${fname}`;
+
+        // 檢查本地快取
+        const cacheDir = path.join(app.getPath('userData'), 'mascot_cache');
+        const localFilePath = path.join(cacheDir, fname);
+        const mascotUrl = fs.existsSync(localFilePath)
+            ? `file://${localFilePath.replace(/\\/g, '/')}`
+            : `https://raw.githubusercontent.com/nephi4377/TAUpdata/master/client/assets/${fname}`;
 
         const primaryDisplay = screen.getPrimaryDisplay();
         const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
