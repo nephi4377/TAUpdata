@@ -121,6 +121,16 @@ class StorageService {
       )
     `);
 
+        // 個人待辦事項 (純本地，不上傳)
+        this.db.run(`
+      CREATE TABLE IF NOT EXISTS local_tasks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL,
+        status TEXT DEFAULT 'pending',
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
         console.log('[Storage] 資料表建立完成');
     }
 
@@ -791,6 +801,51 @@ class StorageService {
             this.db.close();
             console.log('[Storage] 資料庫已關閉');
         }
+    }
+
+    // ==========================================
+    // 個人待辦事項 (Local Tasks) CRUD 功能
+    // ==========================================
+
+    // 取得所有本地待辦事項
+    async getLocalTasks() {
+        const results = this.db.exec(`
+          SELECT id, title, status, created_at 
+          FROM local_tasks 
+          ORDER BY status DESC, created_at DESC
+        `);
+
+        if (results.length === 0) return [];
+
+        const columns = results[0].columns;
+        const rows = results[0].values;
+        return rows.map(row => {
+            const obj = {};
+            columns.forEach((col, idx) => { obj[col] = row[idx]; });
+            return obj;
+        });
+    }
+
+    // 新增待辦事項
+    async addLocalTask(title) {
+        this.db.run(`INSERT INTO local_tasks (title) VALUES (?)`, [title]);
+        this.scheduleSave();
+    }
+
+    // 更新待辦事項狀態
+    async updateLocalTask(id, status, title = null) {
+        if (title !== null) {
+            this.db.run(`UPDATE local_tasks SET status = ?, title = ? WHERE id = ?`, [status, title, id]);
+        } else {
+            this.db.run(`UPDATE local_tasks SET status = ? WHERE id = ?`, [status, id]);
+        }
+        this.scheduleSave();
+    }
+
+    // 刪除待辦事項
+    async deleteLocalTask(id) {
+        this.db.run(`DELETE FROM local_tasks WHERE id = ?`, [id]);
+        this.scheduleSave();
     }
 }
 

@@ -100,7 +100,10 @@ class ConfigManager {
 
                 // 今日打卡資訊（啟動時從後端取得）
                 // 格式: { checkedIn, checkinTime, expectedOffTime, remainingMinutes }
-                todayWorkInfo: null
+                todayWorkInfo: null,
+
+                // iCloud 行事曆公開訂閱網址
+                icloudCalendarUrl: null
             }
         };
 
@@ -329,6 +332,16 @@ class ConfigManager {
     // 別名 (相容 main.js)
     updateWorkInfo(workInfo) {
         this.setTodayWorkInfo(workInfo);
+    }
+
+    // --- iCloud 訂閱網址 ---
+    getIcloudCalendarUrl() {
+        return this.store.get('icloudCalendarUrl');
+    }
+
+    setIcloudCalendarUrl(url) {
+        this.store.set('icloudCalendarUrl', url);
+        console.log('[Config] 已更新 iCloud 訂閱網址');
     }
 }
 

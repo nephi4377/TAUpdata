@@ -5,6 +5,10 @@ const { BrowserWindow, screen, ipcMain, app } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
+// [v1.10.0] iCloud 行事曆解析
+const axios = require('axios');
+const ical = require('node-ical');
+
 class ReminderService {
     constructor(configManager, monitorService) {
         this.config = configManager;
@@ -302,6 +306,14 @@ class ReminderService {
         }
 
         console.log(`[Reminder] 今日共排程 ${scheduledCount} 個提醒，待完成 ${Object.keys(this.todayStatus).length} 項`);
+
+        // [v1.10.0] iCloud 行事曆同步
+        this._syncIcloudCalendar(shiftStartMinutes, offTimeMinutes, todayStr);
+        // 設定每 30 分鐘同步一次 iCloud
+        const icloudTimer = setInterval(() => {
+            this._syncIcloudCalendar(shiftStartMinutes, offTimeMinutes, todayStr);
+        }, 30 * 60 * 1000);
+        this.timers.push(icloudTimer);
     }
 
     // 判斷是否應在今天觸發（不限制週末，因為室內裝修業經常週六上班）
@@ -673,6 +685,101 @@ class ReminderService {
             console.error('[Reminder] 載入狀態失敗:', err);
             this.todayStatus = {};
             return false;
+        }
+    }
+
+    // [v1.10.0] iCloud 行事曆抓取解析
+    async _syncIcloudCalendar(shiftStartMinutes, offTimeMinutes, todayStr) {
+        const url = this.config.getIcloudCalendarUrl();
+        if (!url) return;
+
+        try {
+            console.log('[Reminder] 正在抓取 iCloud 行事曆...');
+            const response = await axios.get(url, { timeout: 15000 });
+            const events = ical.parseICS(response.data);
+
+            // 清理這一次 session 之前的 iCloud 提醒（防止重複堆疊）
+            this.reminders = this.reminders.filter(r => !r.isIcloud);
+            const now = new Date();
+            let count = 0;
+
+            for (const k in events) {
+                if (!Object.hasOwn(events, k)) continue;
+                const ev = events[k];
+                if (ev.type !== 'VEVENT') continue;
+
+                const startDate = new Date(ev.start);
+                const endDate = new Date(ev.end);
+                let isToday = false;
+
+                if (ev.rrule) {
+                    const dates = ev.rrule.between(
+                        new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0),
+                        new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59),
+                        true
+                    );
+                    if (dates.length > 0) isToday = true;
+                } else {
+                    const sStr = this._formatDate(startDate);
+                    const eStr = this._formatDate(new Date(endDate.getTime() - 1000));
+                    if (sStr <= todayStr && eStr >= todayStr) {
+                        isToday = true;
+                    }
+                }
+
+                if (isToday) {
+                    const uid = ev.uid || k;
+                    const id = 'icloud_' + uid;
+                    const hours = startDate.getHours();
+                    const minutes = startDate.getMinutes();
+                    const hhmm = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+
+                    const reminderObj = {
+                        id: id,
+                        icon: '🍏',
+                        title: ev.summary || 'Apple 行程',
+                        message: (ev.description || '無詳細內容') + `\n\n📌 預定時間: ${hhmm}`,
+                        // iCloud 事件要準點觸發，所以設為同個時間點（若全天事件將在 00:00，會立馬觸發）
+                        timeWindow: { start: hhmm, end: hhmm },
+                        frequency: 'daily',
+                        isIcloud: true
+                    };
+
+                    this.reminders.push(reminderObj);
+                    count++;
+
+                    // 加入今日狀態追蹤 (若尚未有)
+                    if (!this.todayStatus[id]) {
+                        this.todayStatus[id] = { status: 'pending' };
+                    }
+
+                    // 如果尚未完成，進行排程
+                    if (this.todayStatus[id].status !== 'completed') {
+                        // 如果時間已過，設定 5 秒後補彈提醒
+                        let triggerTime = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hours, minutes, 0);
+                        let delayMs = triggerTime.getTime() - now.getTime();
+                        if (delayMs <= 0) {
+                            delayMs = 5000; // 過期事件馬上彈（延遲 5 秒）
+                        }
+
+                        const timer = setTimeout(() => {
+                            this.fireReminder(reminderObj, todayStr);
+                        }, delayMs);
+                        this.timers.push(timer);
+                    }
+                }
+            }
+            console.log(`[Reminder] iCloud 同步完成，已載入 ${count} 個今日行程。`);
+
+            // 觸發刷新 UI，讓統計畫面與右鍵選單的清單也能看到
+            const wins = BrowserWindow.getAllWindows();
+            for (const win of wins) {
+                if (!win.isDestroyed() && win.getTitle() === '添心生產力助手 - 詳細統計') {
+                    win.webContents.send('reminder-status-updated', 'icloud_sync');
+                }
+            }
+        } catch (err) {
+            console.error('[Reminder] iCloud 同步失敗:', err.message);
         }
     }
 }

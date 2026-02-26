@@ -34,6 +34,31 @@ class TrayManager {
       const isManual = options && options.isManual === true;
       this.showStatsWindow(isManual);
     });
+
+    // [v1.10.0] 處理桌機一鍵打卡
+    ipcMain.removeHandler('direct-checkin');
+    ipcMain.handle('direct-checkin', async () => {
+      console.log('[Tray] 收到一鍵打卡請求');
+      if (this.checkinService) {
+        const boundEmployee = this.configManager.getBoundEmployee();
+        if (boundEmployee) {
+          // 強制觸發直接打卡
+          const res = await this.checkinService.directCheckin(boundEmployee.userId, boundEmployee.userName);
+          // 重新取得最新資訊
+          if (res && res.success) {
+            const workInfoRes = await this.checkinService.getWorkInfo(boundEmployee.userId);
+            if (workInfoRes.success) {
+              this.configManager.setTodayWorkInfo(workInfoRes.data);
+            }
+            this.monitorService.showToast('打卡成功', res.message || '已經成功送出打卡紀錄');
+          }
+          return res;
+        } else {
+          return { success: false, message: '尚未綁定員工' };
+        }
+      }
+      return { success: false, message: '打卡服務未啟動' };
+    });
   }
 
   // 初始化托盤
@@ -328,6 +353,29 @@ class TrayManager {
 
     template.push({ type: 'separator' });
 
+    template.push({
+      label: '🗓️ 設定 Apple 行事曆連結',
+      click: async () => {
+        const url = await this._promptIcloudUrl();
+        if (url !== null) {
+          // 有些人貼上時會帶 webcal://，我們轉回 https:// 讓 axios 能用
+          let cleanUrl = url.trim();
+          if (cleanUrl.startsWith('webcal://')) {
+            cleanUrl = 'https://' + cleanUrl.substring(9);
+          }
+          this.configManager.setIcloudCalendarUrl(cleanUrl);
+          this.monitorService.showToast('設定成功', 'Apple 行事曆連結已存檔，將在下次同步時生效。');
+          // 立刻呼叫 reminderService 重啟
+          if (this.reminderService) {
+            this.reminderService.stop();
+            this.reminderService.start();
+          }
+        }
+      }
+    });
+
+    template.push({ type: 'separator' });
+
 
     template.push({
       label: '🔄 檢查更新',
@@ -415,6 +463,7 @@ class TrayManager {
     const boundEmployee = this.configManager.getBoundEmployee();
     const workInfo = this.configManager.getTodayWorkInfo();
     const reminderStatus = this.reminderService ? this.reminderService.getTodayReminderStatus() : [];
+    const localTasks = await this.storageService.getLocalTasks();
 
     return {
       stats,
@@ -425,6 +474,7 @@ class TrayManager {
       boundEmployee,
       workInfo,
       reminderStatus,
+      localTasks,
       version: this.getEffectiveVersion()
     };
   }
@@ -432,7 +482,7 @@ class TrayManager {
   // 生成統計頁面 HTML
   async generateStatsHtml(data = null) {
     if (!data) data = await this.getStatsData();
-    const { stats, hourlyStats, topApps, browserHistory, status, boundEmployee, workInfo, reminderStatus } = data;
+    const { stats, hourlyStats, topApps, browserHistory, status, boundEmployee, workInfo, reminderStatus, localTasks } = data;
 
     const productivityRate = stats.total > 0
       ? Math.round((stats.work / stats.total) * 100)
@@ -487,6 +537,10 @@ class TrayManager {
               <span class="value">${workInfo && workInfo.expectedOffTime ? workInfo.expectedOffTime : '--:--'}</span>
             </div>
           </div>
+          <div style="margin-top: 15px; display: flex; gap: 10px;">
+            <button id="directCheckinBtn" class="complete-btn" style="flex: 1; background:#4ecdc4; padding: 8px 16px; border-radius: 6px; cursor: pointer; border: none; color: #1a1a2e; font-weight: bold; font-family: 'Microsoft JhengHei';" onclick="performDirectCheckin()">✅ 立即打卡</button>
+            <button class="complete-btn" style="flex: 1; background:#bb9af7; padding: 8px 16px; border-radius: 6px; cursor: pointer; border: none; color: white; font-weight: bold; font-family: 'Microsoft JhengHei';" onclick="window.reminderAPI.openDashboardWindow()">📊 主控台</button>
+          </div>
         </div>
       `;
     } else {
@@ -496,7 +550,8 @@ class TrayManager {
           <div style="text-align:center; padding: 10px;">
             <p style="margin-bottom: 5px; font-size: 14px; color: #f7768e;">💡 提示：請點擊下方連結進行打卡</p>
             <p style="margin-bottom: 15px; font-size: 11px; color: #888;">打卡後，本視窗將自動同步狀態</p>
-            <button class="complete-btn" style="background:#7aa2f7; padding: 10px 20px;" onclick="window.reminderAPI.openLinkWindow()">📲 立即前往打卡 (LINE)</button>
+            <button class="complete-btn" style="background:#7aa2f7; padding: 10px 20px; width: 100%; margin-bottom: 10px; border-radius: 6px; cursor: pointer; border: none; font-weight: bold; font-family: 'Microsoft JhengHei'; color: white;" onclick="window.reminderAPI.openLinkWindow()">📲 立即前往打卡 (LINE)</button>
+            <button class="complete-btn" style="background:#bb9af7; padding: 10px 20px; width: 100%; border-radius: 6px; cursor: pointer; border: none; font-weight: bold; font-family: 'Microsoft JhengHei'; color: white;" onclick="window.reminderAPI.openDashboardWindow()">📊 進入整合主控台</button>
           </div>
         </div>
       `;
@@ -540,6 +595,40 @@ class TrayManager {
           </div>
         `;
       }
+    }
+
+    // 生成個人待辦事項
+    let localTasksHtml = '';
+    if (localTasks) {
+      let taskList = '';
+      for (const item of localTasks) {
+        let statusClass = item.status === 'completed' ? 'completed' : 'pending';
+        let statusText = item.status === 'completed'
+          ? `<button class="complete-btn" style="background:#888;" onclick="toggleTaskStatus(${item.id}, 'pending')">↩️</button>`
+          : `<button class="complete-btn" onclick="toggleTaskStatus(${item.id}, 'completed')">✅</button>`;
+
+        taskList += `
+          <div class="reminder-row ${statusClass}">
+            <span class="reminder-icon">📝</span>
+            <span class="reminder-title">${this.escapeHtml(item.title)}</span>
+            <span class="reminder-status">${statusText}</span>
+            <span class="reminder-action"><button class="complete-btn" style="background:#f7768e; margin-left:5px;" onclick="deleteTask(${item.id})">🗑️</button></span>
+          </div>
+        `;
+      }
+
+      localTasksHtml = `
+        <div class="stats-card">
+          <h2><span class="icon">✍️</span> 個人待辦清單 (本機)</h2>
+          <div style="display: flex; gap: 10px; margin-bottom: 10px;">
+            <input type="text" id="newTaskInput" placeholder="想記下什麼？" style="flex: 1; padding: 8px; border-radius: 4px; border: 1px solid #444; background: #222; color: #fff; font-family: inherit;" onkeypress="if(event.keyCode==13) addTask()">
+            <button class="complete-btn" style="background:#4ecdc4;" onclick="addTask()">➕ 新增</button>
+          </div>
+          <div class="reminders-list" id="local-tasks-list">
+            ${taskList || '<div class="empty-state" style="padding: 10px;">目前沒有待辦事項</div>'}
+          </div>
+        </div>
+      `;
     }
 
     // 生成網頁瀏覽記錄
@@ -841,6 +930,68 @@ class TrayManager {
       }
     }
 
+    async function performDirectCheckin() {
+      const btn = document.getElementById('directCheckinBtn');
+      if (btn) {
+        btn.disabled = true;
+        btn.innerText = '⏳ 打卡中...';
+      }
+      if (window.reminderAPI) {
+        try {
+          const result = await window.reminderAPI.directCheckin();
+          if (result && result.success) {
+            if (btn) btn.innerText = '✔️ 打卡成功';
+            // 通知主控端重新讀取統計來刷新打卡時間顯示
+            setTimeout(() => {
+              window.reminderAPI.refreshStats();
+            }, 1000);
+          } else {
+            if (btn) {
+              btn.innerText = '❌ 打卡失敗';
+              btn.disabled = false;
+            }
+            alert(result ? result.message : '打卡失敗，請稍後再試');
+          }
+        } catch (e) {
+          if (btn) {
+            btn.innerText = '❌ 網路異常';
+            btn.disabled = false;
+          }
+        }
+      }
+    }
+
+    async function toggleTaskStatus(id, status) {
+      if (window.reminderAPI) {
+        try {
+          await window.reminderAPI.updateLocalTask(id, status, null);
+          window.reminderAPI.refreshStats();
+        } catch(e) {}
+      }
+    }
+    
+    async function deleteTask(id) {
+      if (window.reminderAPI && confirm('確定刪除此待辦事項？')) {
+        try {
+          await window.reminderAPI.deleteLocalTask(id);
+          window.reminderAPI.refreshStats();
+        } catch(e) {}
+      }
+    }
+    
+    async function addTask() {
+      const input = document.getElementById('newTaskInput');
+      const title = input.value.trim();
+      if (!title) return;
+      if (window.reminderAPI) {
+        try {
+          await window.reminderAPI.addLocalTask(title);
+          input.value = '';
+          window.reminderAPI.refreshStats();
+        } catch(e) {}
+      }
+    }
+
     // [v2.0] 消滅閃動：接收 IPC 動態更新 DOM
     if (window.reminderAPI && window.reminderAPI.onUpdateStats) {
       window.reminderAPI.onUpdateStats((data) => {
@@ -864,6 +1015,31 @@ class TrayManager {
 
         // 3. 更新小時分佈與排行 (簡單處理：保留原狀或重新注入部分 HTML)
         // 這裡為了極致流暢，我們只在有數據變動時靜默更新，不頻繁刷新列表以防閃爍
+        
+        // 4. 更新待辦清單列表
+        if (data.localTasks) {
+          const taskContainer = document.getElementById('local-tasks-list');
+          if (taskContainer) {
+            let taskListHTML = '';
+            for (const item of data.localTasks) {
+              const statusClass = item.status === 'completed' ? 'completed' : 'pending';
+              const statusText = item.status === 'completed' 
+                ? '<button class="complete-btn" style="background:#888;" onclick="toggleTaskStatus(' + item.id + ', \\'pending\\')">↩️</button>'
+                : '<button class="complete-btn" onclick="toggleTaskStatus(' + item.id + ', \\'completed\\')">✅</button>';
+              const titleSafe = item.title.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+              
+              taskListHTML += \`
+                <div class="reminder-row \${statusClass}">
+                  <span class="reminder-icon">📝</span>
+                  <span class="reminder-title">\${titleSafe}</span>
+                  <span class="reminder-status">\${statusText}</span>
+                  <span class="reminder-action"><button class="complete-btn" style="background:#f7768e; margin-left:5px;" onclick="deleteTask(\${item.id})">🗑️</button></span>
+                </div>
+              \`;
+            }
+            taskContainer.innerHTML = taskListHTML || '<div class="empty-state" style="padding: 10px;">目前沒有待辦事項</div>';
+          }
+        }
       });
     }
 
@@ -899,6 +1075,8 @@ class TrayManager {
     ${checkinHtml}
 
     ${remindersHtml}
+
+    ${localTasksHtml}
     
     <div class="stats-card">
       <h2><span class="icon">⏱️</span> 時間統計</h2>
@@ -1014,6 +1192,84 @@ class TrayManager {
     }
 
     // [v1.8.9] 移除非預期的 process.exit(0)，修復熱更新導致程式直接消失的 BUG
+  }
+
+  // 小視窗：讓使用者輸入 iCloud 網址
+  async _promptIcloudUrl() {
+    return new Promise((resolve) => {
+      const currentUrl = this.configManager.getIcloudCalendarUrl() || '';
+
+      const promptWindow = new BrowserWindow({
+        width: 450,
+        height: 250,
+        resizable: false,
+        minimizable: false,
+        maximizable: false,
+        alwaysOnTop: true,
+        center: true,
+        frame: false,
+        backgroundColor: '#1e1e2e',
+        webPreferences: {
+          nodeIntegration: true,
+          contextIsolation: false
+        }
+      });
+
+      const html = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+  * { box-sizing: border-box; font-family: 'Microsoft JhengHei', sans-serif; }
+  body { background: #1e1e2e; color: #eee; padding: 20px; user-select: none; margin: 0; }
+  h3 { margin-bottom: 10px; font-size: 16px; color: #a0a0ff; -webkit-app-region: drag; }
+  p { font-size: 12px; color: #aaa; margin-bottom: 15px; }
+  input { width: 100%; padding: 10px; background: #2a2a3e; color: #fff; border: 1px solid #444; border-radius: 6px; margin-bottom: 15px; font-size: 12px; outline:none; -webkit-app-region: no-drag;}
+  input:focus { border-color: #6366f1; }
+  .btns { display: flex; gap: 10px; -webkit-app-region: no-drag;}
+  button { flex: 1; padding: 10px; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; }
+  .btn-confirm { background: #6366f1; color: white; }
+  .btn-cancel { background: #444; color: #aaa; }
+  .btn-clear { background: #f7768e; color: white; }
+</style>
+</head>
+<body>
+  <h3>🗓️ 設定 Apple iCloud 行事曆訂閱</h3>
+  <p>請前往 iPhone 行事曆將指定日曆設為「公開日曆」，然後把 webcal:// 網址貼在下方，小助手會定時載入當日行程並跳出提醒。</p>
+  <input type="text" id="urlInput" placeholder="在此貼上 webcal:// 網址..." value="\${currentUrl}">
+  <div class="btns">
+    <button class="btn-cancel" onclick="const {ipcRenderer} = require('electron'); ipcRenderer.send('prompt-cal-cancel');">取消</button>
+    <button class="btn-clear" onclick="const {ipcRenderer} = require('electron'); ipcRenderer.send('prompt-cal-done', '');">清除綁定</button>
+    <button class="btn-confirm" onclick="const {ipcRenderer} = require('electron'); ipcRenderer.send('prompt-cal-done', document.getElementById('urlInput').value.trim());">儲存設定</button>
+  </div>
+</body>
+</html>`;
+
+      promptWindow.loadURL(`data:text/html;charset=utf-8,\${encodeURIComponent(html)}`);
+
+      const { ipcMain } = require('electron');
+      const doneHandler = (event, val) => {
+        ipcMain.removeListener('prompt-cal-done', doneHandler);
+        ipcMain.removeListener('prompt-cal-cancel', cancelHandler);
+        if (promptWindow && !promptWindow.isDestroyed()) promptWindow.close();
+        resolve(val);
+      };
+      const cancelHandler = () => {
+        ipcMain.removeListener('prompt-cal-done', doneHandler);
+        ipcMain.removeListener('prompt-cal-cancel', cancelHandler);
+        if (promptWindow && !promptWindow.isDestroyed()) promptWindow.close();
+        resolve(null);
+      };
+
+      ipcMain.once('prompt-cal-done', doneHandler);
+      ipcMain.once('prompt-cal-cancel', cancelHandler);
+
+      promptWindow.on('closed', () => {
+        ipcMain.removeListener('prompt-cal-done', doneHandler);
+        ipcMain.removeListener('prompt-cal-cancel', cancelHandler);
+        resolve(null);
+      });
+    });
   }
 }
 

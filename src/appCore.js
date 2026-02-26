@@ -234,7 +234,8 @@ class AppCore {
         const channels = [
             'get-status', 'pause-monitor', 'resume-monitor', 'get-hourly-stats',
             'get-top-apps', 'open-data-folder', 'admin-login-verify',
-            'fetch-team-status', 'fetch-history-data', 'open-link-window'
+            'fetch-team-status', 'fetch-history-data', 'open-link-window', 'open-dashboard-window',
+            'get-local-tasks', 'add-local-task', 'update-local-task', 'delete-local-task'
         ];
         channels.forEach(ch => ipcMain.removeHandler(ch));
         ipcMain.removeAllListeners('admin-login-verify');
@@ -252,6 +253,15 @@ class AppCore {
         ipcMain.handle('open-link-window', () => {
             shell.openExternal('https://liff.line.me/2007974938-jVxn6y37?source=hub');
         });
+        ipcMain.handle('open-dashboard-window', () => {
+            shell.openExternal('https://info.tanxin.space/index.html');
+        });
+
+        // 個人待辦事項 IPC
+        ipcMain.handle('get-local-tasks', () => storageService?.getLocalTasks());
+        ipcMain.handle('add-local-task', (e, title) => storageService?.addLocalTask(title));
+        ipcMain.handle('update-local-task', (e, { id, status, title }) => storageService?.updateLocalTask(id, status, title));
+        ipcMain.handle('delete-local-task', (e, id) => storageService?.deleteLocalTask(id));
 
         ipcMain.on('admin-login-verify', (e, p) => e.reply('admin-login-result', configManager.verifyAdminPassword(p)));
         ipcMain.on('fetch-team-status', async (e) => {

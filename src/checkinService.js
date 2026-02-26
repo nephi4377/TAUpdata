@@ -129,6 +129,38 @@ class CheckinService {
         });
     }
 
+    // [v1.10.0] 桌機直接打卡
+    async directCheckin(userId, userName) {
+        let lat = 0;
+        let lon = 0;
+        try {
+            console.log('[CheckinService] 嘗試透過 IP 取得地理位置...');
+            // 透過公開 API 取得粗略的 IP 經緯度 (支援 CORS，無 key 限制，若超過 rate limit 會失敗)
+            const ipRes = await fetch('https://ipapi.co/json/');
+            if (ipRes.ok) {
+                const ipData = await ipRes.json();
+                if (ipData && ipData.latitude && ipData.longitude) {
+                    lat = parseFloat(ipData.latitude);
+                    lon = parseFloat(ipData.longitude);
+                    console.log(`[CheckinService] IP 定位成功: ${lat}, ${lon} (${ipData.city})`);
+                }
+            }
+        } catch (e) {
+            console.warn('[CheckinService] IP 定位失敗，使用預設值 0,0', e.message);
+        }
+
+        // 發送給舊版的打卡端點 (會進到 WebApp.js -> processCheckin)
+        return await this._get({
+            action: 'checkin',
+            userId: userId,
+            userName: userName,
+            lat: lat,
+            lon: lon,
+            source: 'desktop_app_' + this.pcName,
+            timestamp: new Date().getTime()
+        });
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // 生產力報告 API
     // ═══════════════════════════════════════════════════════════════

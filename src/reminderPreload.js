@@ -13,5 +13,14 @@ contextBridge.exposeInMainWorld('reminderAPI', {
     // 監聽數據更新 (用於消滅閃動的動態 DOM 更新)
     onUpdateStats: (callback) => ipcRenderer.on('update-stats-data', (event, data) => callback(data)),
     // 開啟連結帳號視窗
-    openLinkWindow: () => ipcRenderer.invoke('open-link-window')
+    openLinkWindow: () => ipcRenderer.invoke('open-link-window'),
+    // 開啟整合主控台
+    openDashboardWindow: () => ipcRenderer.invoke('open-dashboard-window'),
+    // 個人待辦事項
+    getLocalTasks: () => ipcRenderer.invoke('get-local-tasks'),
+    addLocalTask: (title) => ipcRenderer.invoke('add-local-task', title),
+    updateLocalTask: (id, status, title) => ipcRenderer.invoke('update-local-task', { id, status, title }),
+    deleteLocalTask: (id) => ipcRenderer.invoke('delete-local-task', id),
+    // 桌機直接打卡
+    directCheckin: () => ipcRenderer.invoke('direct-checkin')
 });
