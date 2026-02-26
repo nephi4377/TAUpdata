@@ -1,0 +1,56 @@
+{
+	"clientId": "4f657864-1397-4bfe-95e6-2e1bc5d27bc1",
+	"apiUrl": null,
+	"apiKey": null,
+	"sampleIntervalSeconds": 30,
+	"reportIntervalMinutes": 60,
+	"classificationRules": {
+		"work": [
+			"AutoCAD",
+			"Visual Studio"
+		],
+		"game": [
+			"Steam"
+		],
+		"leisure": [
+			"YouTube"
+		]
+	},
+	"autoStart": true,
+	"showNotifications": true,
+	"isFirstRun": false,
+	"lastConfigSync": null,
+	"boundEmployee": {
+		"userId": "Ud58333430513b7527106fa71d2e30151",
+		"userName": "黃俊豪",
+		"shiftStart": "08:30",
+		"shiftEnd": "17:30",
+		"flexibleMinutes": 30,
+		"group": "台南店",
+		"boundAt": "2026-02-21T08:54:26.810Z",
+		"permission": 5
+	},
+	"pcName": null,
+	"lastReportUploadDate": "2026-02-21",
+	"todayWorkInfo": {
+		"userName": "黃俊豪",
+		"shiftStart": "08:30",
+		"shiftEnd": "17:30",
+		"flexibleMinutes": 30,
+		"checkedIn": true,
+		"checkinTime": "10:34",
+		"expectedOffTime": "18:00",
+		"remainingMinutes": 0,
+		"checkinCount": 1
+	},
+	"reminderHistory": {
+		"checkin_reminder": "2026-02-21",
+		"tomorrow_plan": "2026-02-21",
+		"daily_report": "2026-02-21",
+		"client_msg_2": "2026-02-21",
+		"site_photo_report": "2026-02-21",
+		"client_msg_1": "2026-02-21",
+		"daily_schedule": "2026-02-21"
+	},
+	"adminPassword": "bd5113c2f72fcceefafbe6b6573cb58a:23825b953cbeced21fe70f83953ea500"
+}

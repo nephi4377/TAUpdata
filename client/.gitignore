@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+release/
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# Developer tools
+.vscode/
+.idea/
+*.log
+output.log
+debug_log.txt
+
+# Local data (Security & Privacy)
+data/*.db
+data/*.sqlite
+.cache/
+
+# Temp files
+tmp/
+temp/
+
+# Environment variables
+.env
+.env.local
