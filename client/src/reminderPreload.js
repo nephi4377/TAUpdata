@@ -9,7 +9,7 @@ contextBridge.exposeInMainWorld('reminderAPI', {
     // 稍後再提醒
     snooze: (reminderId) => ipcRenderer.invoke('reminder-snooze', reminderId),
     // 請求刷新統計視窗
-    refreshStats: () => ipcRenderer.send('refresh-stats'),
+    refreshStats: (options) => ipcRenderer.send('refresh-stats', options),
     // 監聽數據更新 (用於消滅閃動的動態 DOM 更新)
     onUpdateStats: (callback) => ipcRenderer.on('update-stats-data', (event, data) => callback(data)),
     // 開啟連結帳號視窗
@@ -18,9 +18,12 @@ contextBridge.exposeInMainWorld('reminderAPI', {
     openDashboardWindow: () => ipcRenderer.invoke('open-dashboard-window'),
     // 個人待辦事項
     getLocalTasks: () => ipcRenderer.invoke('get-local-tasks'),
-    addLocalTask: (title) => ipcRenderer.invoke('add-local-task', title),
+    addLocalTask: (title, dueDate, dueTime, leadMinutes, repeatType) =>
+        ipcRenderer.invoke('add-local-task', { title, dueDate, dueTime, leadMinutes, repeatType }),
     updateLocalTask: (id, status, title) => ipcRenderer.invoke('update-local-task', { id, status, title }),
     deleteLocalTask: (id) => ipcRenderer.invoke('delete-local-task', id),
+    // 取得 iCloud 行事曆行程 (用於 UI 顯示)
+    getIcloudEvents: () => ipcRenderer.invoke('get-icloud-events'),
     // 桌機直接打卡
     directCheckin: () => ipcRenderer.invoke('direct-checkin')
 });

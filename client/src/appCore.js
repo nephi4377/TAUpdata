@@ -224,6 +224,14 @@ class AppCore {
                 checkinService.submitTodayReport(storageService, reminderService).catch(e => console.error(e));
             }
         }, 60 * 1000);
+
+        // 每 15 分鐘背景自動檢查一次更新 (v1.11.8+ 新增)
+        this.timers.autoUpdateCheck = setInterval(() => {
+            log.info('[Core] 執行背景定時更新巡檢 (15min)...');
+            this.patchUpdater.checkForUpdates(false).then(res => {
+                if (!res && app.isPackaged) autoUpdater.checkForUpdates();
+            });
+        }, 15 * 60 * 1000);
     }
 
     /**
@@ -242,7 +250,7 @@ class AppCore {
         ipcMain.removeAllListeners('fetch-team-status');
         ipcMain.removeAllListeners('fetch-history-data');
 
-        const { monitorService, storageService, configManager, checkinService } = this.services;
+        const { monitorService, storageService, configManager, checkinService, reminderService } = this.services;
 
         ipcMain.handle('get-status', () => monitorService?.getStatus());
         ipcMain.handle('pause-monitor', (e, d) => monitorService?.pause(d));
@@ -259,8 +267,18 @@ class AppCore {
 
         // 個人待辦事項 IPC
         ipcMain.handle('get-local-tasks', () => storageService?.getLocalTasks());
-        ipcMain.handle('add-local-task', (e, title) => storageService?.addLocalTask(title));
+        ipcMain.handle('add-local-task', async (e, { title, dueDate, dueTime, leadMinutes, repeatType }) => {
+            const res = await storageService?.addLocalTask(title, dueDate, dueTime, leadMinutes, repeatType);
+            if (reminderService) {
+                reminderService.triggerLocalCheck();
+            }
+            return res;
+        });
         ipcMain.handle('update-local-task', (e, { id, status, title }) => storageService?.updateLocalTask(id, status, title));
+        ipcMain.handle('get-icloud-events', () => {
+            if (!this.services.reminderService) return [];
+            return this.services.reminderService.reminders.filter(r => r.isIcloud);
+        });
         ipcMain.handle('delete-local-task', (e, id) => storageService?.deleteLocalTask(id));
 
         ipcMain.on('admin-login-verify', (e, p) => e.reply('admin-login-result', configManager.verifyAdminPassword(p)));
