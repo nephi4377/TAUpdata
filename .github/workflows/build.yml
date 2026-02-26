@@ -1,0 +1,33 @@
+name: Build/Release Electron App
+
+on:
+  push:
+    tags:
+      - 'v*'
+    branches:
+      - master
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Check out git repository
+        uses: actions/checkout@v3
+
+      - name: Install Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
+
+      - name: Install dependencies
+        run: |
+          cd client
+          npm install
+
+      - name: Build and Release Electron App
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd client
+          npm run build
+          npm run release
