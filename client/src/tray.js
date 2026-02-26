@@ -22,7 +22,7 @@ class TrayManager {
     this.tray = null;
     this.statsWindow = null;
     this._registerIpcHandlers();
-    console.log('[Tray] 系統功能已全面還原 (v1.11.19)');
+    console.log('[Tray] 系統功能已全面還原 (v1.11.23)');
   }
 
   destroy() {
