@@ -411,10 +411,23 @@ class MonitorService {
     showToast(title, body) {
         console.log(`[Monitor] 顯示警示: ${title}`);
 
+        // 隨機選取小秘書裝束
+        const config = this.classifierService.configManager;
+        const gender = config.get('mascotGender') || 'female';
+        let fname = 'secretary.png';
+        if (gender === 'female') {
+            const skins = ['default', 'blizzard', 'thunder', 'boulder', 'sacred', 'prism'];
+            const randomSkin = skins[Math.floor(Math.random() * skins.length)];
+            fname = randomSkin === 'default' ? 'secretary.png' : `secretary_${randomSkin}.png`;
+        } else {
+            fname = 'secretary_male.png';
+        }
+        const mascotUrl = `https://raw.githubusercontent.com/nephi4377/TAUpdata/master/client/assets/${fname}`;
+
         const primaryDisplay = screen.getPrimaryDisplay();
         const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
-        const windowWidth = 350;
-        const windowHeight = 100;
+        const windowWidth = 420; // 加寬以容納小秘書
+        const windowHeight = 120;
         const margin = 20;
         const x = margin;
         const y = screenHeight - windowHeight - margin;
@@ -434,7 +447,7 @@ class MonitorService {
                 movable: false,
                 minimizable: false,
                 maximizable: false,
-                closable: false, // 禁止使用者關閉 (由程式控制)
+                closable: false,
                 show: false,
                 webPreferences: {
                     nodeIntegration: false,
@@ -453,7 +466,7 @@ class MonitorService {
             });
         }
 
-        // HTML 內容
+        // HTML 內容 (加入小秘書外掛)
         const html = `
 <!DOCTYPE html>
 <html>
@@ -462,35 +475,53 @@ class MonitorService {
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-            font-family: 'Microsoft JhengHei', 'Segoe UI', sans-serif;
-            background: rgba(30, 30, 50, 0.95);
+            font-family: 'Microsoft JhengHei', sans-serif;
+            background: rgba(26, 26, 46, 0.98);
             color: #fff;
-            border-radius: 12px;
-            padding: 15px 20px;
-            border: 1px solid rgba(255,255,255,0.2);
-            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+            border-radius: 15px;
+            padding: 12px;
+            border: 1px solid rgba(78, 205, 196, 0.5);
+            box-shadow: 0 8px 32px rgba(0,0,0,0.5);
             height: 100vh;
+            display: flex;
+            align-items: center;
+            overflow: hidden;
+        }
+        .mascot {
+            width: 70px;
+            height: 95px;
+            background: url('${mascotUrl}') center/cover;
+            border-radius: 8px;
+            border: 1px solid #4ecdc4;
+            flex-shrink: 0;
+            margin-right: 15px;
+        }
+        .content {
+            flex: 1;
             display: flex;
             flex-direction: column;
             justify-content: center;
         }
         .title {
-            font-size: 16px;
+            font-size: 15px;
             font-weight: bold;
-            margin-bottom: 8px;
+            margin-bottom: 5px;
             color: #4ecdc4;
         }
         .body {
-            font-size: 13px;
-            color: #ccc;
-            line-height: 1.4;
+            font-size: 12px;
+            color: #ddd;
+            line-height: 1.5;
             white-space: pre-wrap;
         }
     </style>
 </head>
 <body>
-    <div class="title">${this.escapeHtml(title)}</div>
-    <div class="body">${this.escapeHtml(body)}</div>
+    <div class="mascot"></div>
+    <div class="content">
+        <div class="title">${this.escapeHtml(title)}</div>
+        <div class="body">${this.escapeHtml(body)}</div>
+    </div>
 </body>
 </html>
         `;
@@ -498,7 +529,7 @@ class MonitorService {
         this.toastWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
 
         if (!this.toastWindow.isVisible()) {
-            this.toastWindow.showInactive(); // 不搶焦點
+            this.toastWindow.showInactive();
         }
 
         // 重設/啟動 自動隱藏計時器
