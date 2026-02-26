@@ -238,7 +238,7 @@ class AppCore {
      * 註冊 IPC 處理 (將原本 main.js 的 handlers 移入)
      */
     setupIpcHandlers() {
-        // 清除舊的才能重新註冊 (熱更新必備，防止 Attempted to register a second handler 錯誤)
+        // [v1.11.23] 統一清理舊的管線，防止 Attempted to register a second handler
         const channels = [
             'get-status', 'pause-monitor', 'resume-monitor', 'get-hourly-stats',
             'get-top-apps', 'open-data-folder', 'admin-login-verify',
@@ -246,12 +246,14 @@ class AppCore {
             'get-local-tasks', 'add-local-task', 'update-local-task', 'delete-local-task',
             'get-icloud-events', 'direct-checkin'
         ];
-        channels.forEach(ch => ipcMain.removeHandler(ch));
+        channels.forEach(ch => {
+            try { ipcMain.removeHandler(ch); } catch (e) { }
+        });
 
         ipcMain.removeAllListeners('admin-login-verify');
         ipcMain.removeAllListeners('fetch-team-status');
         ipcMain.removeAllListeners('fetch-history-data');
-        ipcMain.removeAllListeners('refresh-stats'); // 關鍵：清除 refresh-stats 事件監聽
+        ipcMain.removeAllListeners('refresh-stats');
 
         const { monitorService, storageService, configManager, checkinService, reminderService } = this.services;
 
@@ -381,66 +383,11 @@ class AppCore {
     }
 
     /**
-     * 熱重啟
+     * 熱重啟 (v1.11.23 改為強制重啟以確保穩定性)
      */
     async restartServices() {
-        log.info('[Core] 準備執行熱重啟...');
-
-        // [v1.8.9b Safety] 防自殺補丁：暫時攔截退出指令，防止舊版 destroy() 時誤殺進程
-        const originalProcessExit = process.exit;
-        const originalAppExit = app.exit;
-        const originalAppQuit = app.quit;
-        process.exit = () => { log.warn('[Core] 攔截到熱重啟期間的 process.exit() 請求'); };
-        app.exit = () => { log.warn('[Core] 攔截到熱重啟期間的 app.exit() 請求'); };
-        app.quit = () => { log.warn('[Core] 攔截到熱重啟期間的 app.quit() 請求'); };
-
-        try {
-            // 1. 停止服務
-            if (this.services.monitorService) this.services.monitorService.stop();
-            if (this.services.reminderService) this.services.reminderService.stop();
-
-            // 確保托盤圖示與事件監聽徹底移除
-            if (this.services.trayManager) {
-                try {
-                    this.services.trayManager.destroy();
-                } catch (e) {
-                    log.error('[Core] 托盤銷毀出錯 (不影響重啟):', e);
-                }
-            }
-
-            if (this.services.storageService) await this.services.storageService.close();
-
-            // 2. 清除計時器
-            for (const k in this.timers) clearInterval(this.timers[k]);
-            this.timers = {};
-
-            // 3. 重啟初始化
-            log.info('[Core] 正在重新執行核心初始化 (熱更新)...');
-            const success = await this.init();
-
-            if (!success) {
-                throw new Error('核心初始化失敗');
-            }
-
-            // [v1.8.9b Safety] 恢復原始退出指令
-            process.exit = originalProcessExit;
-            app.exit = originalAppExit;
-            app.quit = originalAppQuit;
-
-            log.info('[Core] 熱重啟成功生效，服務已恢復運行');
-            return success;
-        } catch (err) {
-            log.error('[Core] 熱重啟崩潰，執行熔斷回退或全程序重啟:', err);
-
-            // 恢復原始退出指令以便執行 relaunch
-            process.exit = originalProcessExit;
-            app.exit = originalAppExit;
-            app.quit = originalAppQuit;
-
-            // 如果 init 失敗，嘗試全程序重啟以確保系統可用
-            this.fullRestart();
-            return false;
-        }
+        log.info('[Core] 檢測到新補丁，執行全程序重啟以套用更新...');
+        this.fullRestart();
     }
 
     /**
