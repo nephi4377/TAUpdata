@@ -194,24 +194,26 @@ class TrayManager {
     const { version, mascotUrl, stats, hourlyStats, topApps, boundEmployee, workInfo } = data;
     const rate = stats.total > 0 ? Math.round((stats.work / stats.total) * 100) : 0;
 
-    // 還原完整打卡區塊與主控台按鈕
-    const checkinHtml = boundEmployee
-      ? `<div class="card"><h2>👤 使用者: ${boundEmployee.userName}</h2><div class="grid2"><div>上班: ${workInfo?.checkinTime || '--:--'}</div><div>下班: ${workInfo?.expectedOffTime || '--:--'}</div></div><div style="display:flex; gap:10px; margin-top:15px;"><button class="btn ok" onclick="doCheckin()">✅ 打卡發送</button><button class="btn info" onclick="window.reminderAPI.openDashboardWindow()">🖥️ 主控台</button></div></div>`
-      : `<div class="card" style="border:2px dashed #f7768e; text-align:center;"><h2>⚠️ 未連結打卡帳號</h2><button class="btn" style="background:#7aa2f7; margin-top:10px;" onclick="window.reminderAPI.openLinkWindow()">📲 前往綁定 (LINE)</button></div>`;
+    // 準備按鈕區塊
+    const checkinBtn = boundEmployee
+      ? `<button class="btn ok" onclick="doCheckin()" id="checkin-btn">✅ 打卡發送</button>
+         <button class="btn info" onclick="window.reminderAPI.openDashboardWindow()">🖥️ 主控台</button>`
+      : `<button class="btn" style="background:#7aa2f7; width:100%;" onclick="window.reminderAPI.openLinkWindow()">📲 前往綁定 (LINE)</button>`;
 
     return `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>
       * { margin:0; padding:0; box-sizing:border-box; font-family:sans-serif; }
-      body { background:#1a1a2e; color:#eee; padding:20px; }
+      body { background:#1a1a2e; color:#eee; padding:20px; overflow-x:hidden; }
       .container { max-width: 600px; margin: 0 auto; }
       .mascot-area { display:flex; align-items:center; justify-content:center; gap:20px; margin-bottom:20px; padding:15px; background:rgba(255,255,255,0.05); border-radius:15px; }
       .avatar { width:100px; height:150px; border-radius:10px; background:url('${mascotUrl}') center/cover; border:2px solid #4ecdc4; animation: float 4s infinite ease-in-out; }
       .speech { background:white; color:#333; padding:12px; border-radius:10px; font-size:13px; font-weight:bold; max-width:250px; box-shadow:0 4px 15px rgba(0,0,0,0.2); position:relative; }
       .speech::after { content:''; position:absolute; left:-10px; top:20px; border-width:10px 10px 10px 0; border-style:solid; border-color:transparent white transparent transparent; }
       @keyframes float { 0%, 100% { transform:translateY(0); } 50% { transform:translateY(-6px); } }
-      .card { background:rgba(255,255,255,0.08); border-radius:12px; padding:20px; margin-bottom:20px; }
-      .btn { flex:1; padding:10px; border:none; border-radius:6px; cursor:pointer; font-weight:bold; color:white; }
-      .btn.ok { background:#4ecdc4; color:#1a1a2e; }
-      .btn.info { background:#565f89; }
+      .card { background:rgba(255,255,255,0.08); border-radius:12px; padding:20px; margin-bottom:20px; box-shadow: 0 4px 20px rgba(0,0,0,0.2); }
+      .btn { padding:12px; border:none; border-radius:8px; cursor:pointer; font-weight:bold; color:white; transition: all 0.2s; }
+      .btn:active { transform: scale(0.95); opacity: 0.8; }
+      .btn.ok { background:#4ecdc4; color:#1a1a2e; flex: 2; }
+      .btn.info { background:#565f89; flex: 1; }
       .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:10px; }
       .summary-grid { display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; text-align:center; }
       .summary-val { font-size:22px; font-weight:bold; color:#4ecdc4; }
@@ -219,14 +221,26 @@ class TrayManager {
       .hour-bar-box { flex:1; height:8px; display:flex; background:rgba(255,255,255,0.05); margin:0 10px; border-radius:4px; overflow:hidden; }
       .bar.work { background:#4caf50; } .bar.leis { background:#f7768e; } .bar.othe { background:#999; }
       .app-row { display:flex; justify-content:space-between; padding:8px; border-bottom:1px solid rgba(255,255,255,0.05); font-size:13px; }
+      .task-item { display:flex; justify-content:space-between; align-items:center; padding:10px; border-bottom:1px solid rgba(255,255,255,0.05); }
+      .task-btn { background: #4ecdc4; border:none; color:#1a1a2e; width:28px; height:28px; border-radius:50%; cursor:pointer; font-weight:bold; }
     </style></head>
-    <body onload="init()">
+    <body>
       <div class="container">
-        <div class="mascot-area"><div class="avatar"></div><div class="speech" id="msg">工作順利嗎？加油喔！✨</div></div>
-        <h1 style="text-align:center; color:#4ecdc4;">📊 生產力統計報表</h1>
-        <p style="text-align:center; color:#666; font-size:11px; margin-bottom:15px;">v${version}</p>
+        <div class="mascot-area">
+          <div class="avatar"></div>
+          <div class="speech" id="msg">正在下載最新行程...</div>
+        </div>
 
-        <div id="checkin-box">${checkinHtml}</div>
+        <div class="card" id="user-card">
+          <h2>👤 使用者: ${boundEmployee ? boundEmployee.userName : '未登入'}</h2>
+          <div class="grid2">
+            <div>上班: <span id="ck-in">${workInfo?.checkinTime || '--:--'}</span></div>
+            <div>下班: <span id="ck-out">${workInfo?.expectedOffTime || '--:--'}</span></div>
+          </div>
+          <div style="display:flex; gap:10px; margin-top:20px;">
+            ${checkinBtn}
+          </div>
+        </div>
 
         <div class="card">
           <h2>⏱️ 今日時間概覽</h2>
@@ -235,28 +249,102 @@ class TrayManager {
             <div style="background:#000; padding:10px; border-radius:8px;"><div id="l-v" class="summary-val" style="color:#f7768e;">${this.formatMinutes(stats.leisure)}</div><div>休閒</div></div>
             <div style="background:#000; padding:10px; border-radius:8px;"><div id="o-v" class="summary-val" style="color:#aaa;">${this.formatMinutes(stats.other)}</div><div>其他</div></div>
           </div>
-          <div style="height:10px; background:#333; border-radius:5px; margin:15px 0; overflow:hidden;"><div id="p-f" style="height:100%; background:#4caf50; width:${rate}%;"></div></div>
-          <div id="p-t" style="text-align:center; font-size:13px;">當前生產力：${rate}%</div>
+          <div style="height:12px; background:#333; border-radius:6px; margin:15px 0; overflow:hidden; border:1px solid #444;">
+            <div id="p-f" style="height:100%; background:#4caf50; width:${rate}%; transition: width 0.5s;"></div>
+          </div>
+          <div id="p-t" style="text-align:center; font-size:13px; font-weight:bold;">當前生產力：${rate}%</div>
         </div>
 
-        <div class="card"><h2>📅 每小時工作詳情</h2><div id="h-l" style="margin-top:10px;">${(hourlyStats || []).map(r => `<div class="hour-row"><span>${r.hour}:00</span><div class="hour-bar-box"><div class="bar work" style="width:${r.work_pct}%"></div><div class="bar leis" style="width:${r.leisure_pct}%"></div><div class="bar othe" style="width:${r.other_pct}%"></div></div><span>${this.formatMinutes(r.total)}</span></div>`).join('')}</div></div>
-        <div class="card"><h2>📋 提醒與待辦行程</h2><div id="t-l"></div></div>
-        <div class="card"><h2>📱 應用排行</h2><div id="a-l">${(topApps || []).map(a => `<div class="app-row"><span>${a.app_name}</span><span style="color:#4ecdc4;">${this.formatMinutes(Math.round(a.total_seconds / 60))}</span></div>`).join('')}</div></div>
+        <div class="card">
+          <h2>📅 每小時工作詳情</h2>
+          <div id="h-l" style="margin-top:10px;">
+            ${(hourlyStats || []).map(r => `
+              <div class="hour-row">
+                <span>${r.hour}:00</span>
+                <div class="hour-bar-box">
+                  <div class="bar work" style="width:${r.work_pct || 0}%"></div>
+                  <div class="bar leis" style="width:${r.leisure_pct || 0}%"></div>
+                  <div class="bar othe" style="width:${r.other_pct || 0}%"></div>
+                </div>
+                <span>${this.formatMinutes(r.total)}</span>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>📋 提醒與待辦行程</h2>
+          <div id="t-l" style="margin-top:10px;"></div>
+        </div>
+
+        <div class="card">
+          <h2>📱 應用排行</h2>
+          <div id="a-l">
+            ${(topApps || []).map(a => `
+              <div class="app-row">
+                <span>${a.app_name}</span>
+                <span style="color:#4ecdc4; font-weight:bold;">${this.formatMinutes(Math.round(a.total_seconds / 60))}</span>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+        
+        <p style="text-align:center; color:#555; font-size:11px; margin-bottom:20px;">版本：v${version}</p>
       </div>
+
       <script>
         function fmt(m){ if(!m)return '0分'; if(m<60)return m+'分'; return Math.floor(m/60)+'h '+(m%60)+'m'; }
-        async function doCheckin(){ const r=await window.reminderAPI.directCheckin(); if(r.success) window.reminderAPI.refreshStats(); else alert(r.message); }
-        async function toggle(id, s){ await window.reminderAPI.updateLocalTask(id, s); window.reminderAPI.refreshStats(); }
+        
+        // [不可變動] 打卡按鈕邏輯
+        async function doCheckin(){
+           if(!window.reminderAPI) return alert('系統組件加載中，請稍候...');
+           const btn = document.getElementById('checkin-btn');
+           if(btn) btn.disabled = true;
+           try {
+             const r = await window.reminderAPI.directCheckin();
+             if(r.success) {
+               window.reminderAPI.refreshStats();
+             } else {
+               alert('打卡失敗：' + r.message);
+               if(btn) btn.disabled = false;
+             }
+           } catch(e) {
+             alert('通訊錯誤：' + e.message);
+             if(btn) btn.disabled = false;
+           }
+        }
 
-        window.reminderAPI.onUpdateStats((d) => {
+        // [不可變動] 待辦切換邏輯
+        async function toggle(id, s){
+          if(!window.reminderAPI) return;
+          await window.reminderAPI.updateLocalTask({id, status: s});
+          window.reminderAPI.refreshStats();
+        }
+
+        // [不可變動] 數據更新監聽
+        if (window.reminderAPI && window.reminderAPI.onUpdateStats) {
+          window.reminderAPI.onUpdateStats((d) => {
+            console.log("收到數據更新:", d);
+            updateUI(d);
+          });
+        }
+
+        function updateUI(d) {
+          // 更新數值
           document.getElementById('w-v').innerText = fmt(d.stats.work);
           document.getElementById('l-v').innerText = fmt(d.stats.leisure);
           document.getElementById('o-v').innerText = fmt(d.stats.other);
+          
+          if (d.workInfo) {
+            if(document.getElementById('ck-in')) document.getElementById('ck-in').innerText = d.workInfo.checkinTime || '--:--';
+            if(document.getElementById('ck-out')) document.getElementById('ck-out').innerText = d.workInfo.expectedOffTime || '--:--';
+          }
+
           const r = d.stats.total > 0 ? Math.round((d.stats.work/d.stats.total)*100) : 0;
           document.getElementById('p-f').style.width = r + '%';
           document.getElementById('p-t').innerText = '當前生產力：' + r + '%';
 
-          // 擴充對話庫 (10+ 隨機鼓勵)
+          // 更新對話
           const quotes = [
             "今天的工作進行得如何呢？記得每小時起來拉伸一下喔！🏃‍♂️",
             "看到您這麼專注，我也得更努力幫您打點行程了！💪",
@@ -264,39 +352,48 @@ class TrayManager {
             "只要每天進步一點點，最後都會變成巨大的成就！✨",
             "今天的效率相當不錯喔，保持這個節奏！🚀",
             "累了嗎？閉上眼睛轉動一下眼球，保護好視力喔。👁️",
-            "您專注工作的樣子最帥氣/迷人了，加油！🔥",
+            "您專注工作的樣子最帥氣，加油！🔥",
             "別忘了多喝水，大腦水分充足會更有創意喔！💧",
             "目前進度穩定，放寬心，我們一項一項來完成。📅",
             "小提醒：您的健康是最高優先級，別太拼命了喔。❤️"
           ];
 
-          // 判斷提醒行程
           const tasks = d.localTasks || [];
           const icloud = d.icloudEvents || [];
           const pendingCount = tasks.filter(t => t.status !== 'completed').length;
-          const upcomingCal = icloud.filter(e => !e.completed).length;
-
+          
           let m = quotes[Math.floor(Math.random() * quotes.length)];
-          if (upcomingCal > 0) m = "偵測到由 iCloud 取得的行事曆行程，請記得查看喔！📅";
-          else if (pendingCount > 0) m = "今天還有 " + pendingCount + " 項待辦行程需要留意喔，加油！💪";
-          else if (r >= 85) m = "今天的生產力爆表啦！您真是工作效率達人！🏅";
+          if (icloud.length > 0) m = "偵測到您的行事曆有即將到來的行程，別忘了空出時間喔！📅";
+          else if (pendingCount > 0) m = "今天還有 " + pendingCount + " 項重要待辦行程，我會陪您一起達成！💪";
+          else if (r >= 85) m = "您的專注力驚人！看來今天的進度會超標完成呢！🎖️";
           
           document.getElementById('msg').innerText = m;
 
+          // 更新提醒清單
           let th = '';
-          // 顯示 iCloud 行程 (置頂)
           icloud.forEach(e => {
-             th += '<div style="display:flex; justify-content:space-between; padding:8px; border-bottom:1px solid rgba(78,205,196,0.3); background:rgba(78,205,196,0.05);"><span>📅 [行事曆] ' + e.title + '</span><span style="font-size:10px; color:#4ecdc4;">' + (e.time||'') + '</span></div>';
+            th += \`<div style="display:flex; justify-content:space-between; padding:12px; border-bottom:1px solid rgba(78,205,196,0.3); background:rgba(78,205,196,0.1); border-radius:8px; margin-bottom:5px;">
+                      <span style="color:#4ecdc4; font-weight:bold;">📅 [行事曆] \${e.title}</span>
+                      <span style="font-size:12px; color:#4ecdc4;">\${e.time || ''}</span>
+                    </div>\`;
           });
-          // 顯示本地待辦
+          
           tasks.forEach(t => { 
             const isC = t.status === 'completed';
-            th += '<div style="display:flex; justify-content:space-between; padding:8px; border-bottom:1px solid rgba(255,255,255,0.05);'+(isC?'opacity:0.4;':'')+'"><span>' + (isC?'✅':'📌') + ' ' + t.title + '</span>' + (!isC ? '<button onclick="toggle('+t.id+', \\''+(isC?'pending':'completed')+'\\')">'+(isC?'↩️':'✅')+'</button>' : '') + '</div>';
+            th += \`<div class="task-item" style="\${isC ? 'opacity:0.4;' : ''}">
+                      <span>\${isC ? '✅' : '📌'} \${t.title}</span>
+                      \${!isC ? \`<button class="task-btn" onclick="toggle(\${t.id}, 'completed')">✓</button>\` : ''}
+                    </div>\`;
           });
-          document.getElementById('t-l').innerHTML = th || '<div style="text-align:center; color:#555;">今日尚無待辦事項</div>';
-        });
+          document.getElementById('t-l').innerHTML = th || '<div style="text-align:center; color:#666; padding:20px;">今日尚無待辦事項</div>';
+        }
 
-        function init(){ setTimeout(()=>window.reminderAPI.refreshStats(), 500); }
+        // 過場初始化
+        window.onload = function() {
+          if (window.reminderAPI && window.reminderAPI.refreshStats) {
+            window.reminderAPI.refreshStats();
+          }
+        };
       </script>
     </body></html>`;
   }
