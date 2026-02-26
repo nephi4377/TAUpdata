@@ -19,20 +19,25 @@ jobs:
         with:
           node-version: 18
           cache: 'npm'
-          cache-dependency-path: package-lock.json
+          cache-dependency-path: client/package-lock.json
 
       - name: Install Dependencies
-        run: npm install
+        run: |
+          cd client
+          npm install
 
       - name: Build and Publish
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
-        run: npm run build -- --publish always
+        run: |
+          cd client
+          npm run build -- --publish always
 
       - name: Create and Upload Patch Zip
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
+          cd client
           $VERSION = node -p "require('./package.json').version"
           Compress-Archive -Path src -DestinationPath patch-v${VERSION}.zip -Force
           gh release upload v$VERSION patch-v${VERSION}.zip --clobber
