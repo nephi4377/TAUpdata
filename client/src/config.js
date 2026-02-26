@@ -115,7 +115,8 @@ class ConfigManager {
                 storeLocations: STORE_LOCATIONS,
 
                 // [v1.11.10] 秘書性別設定 (female / male)
-                mascotGender: 'female'
+                mascotGender: 'female',
+                mascotSkin: 'default'
             }
         };
 
@@ -370,6 +371,15 @@ class ConfigManager {
     setMascotGender(gender) {
         this.store.set('mascotGender', gender);
         console.log(`[Config] 秘書性別已切換為: ${gender}`);
+    }
+
+    getMascotSkin() {
+        return this.store.get('mascotSkin') || 'default';
+    }
+
+    setMascotSkin(skin) {
+        this.store.set('mascotSkin', skin);
+        console.log(`[Config] 秘書裝束已更換為: ${skin}`);
     }
 }
 

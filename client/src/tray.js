@@ -172,6 +172,32 @@ class TrayManager {
         this.updateMenu();
       }
     });
+
+    // [v1.11.10] 切換秘書裝束 (僅女版支援)
+    if (currentGender === 'female') {
+      const currentSkin = this.configManager.getMascotSkin();
+      const skins = [
+        { id: 'default', name: '🏙️ 預設黑系' },
+        { id: 'blizzard', name: '❄️ 暴雪之藍青' },
+        { id: 'thunder', name: '⚡ 雷電之品紅' },
+        { id: 'boulder', name: '⛰️ 巨岩之純黃' },
+        { id: 'sacred', name: '🕊️ 神聖之白' },
+        { id: 'prism', name: '✨ 天星棱光' }
+      ];
+      template.push({
+        label: `👕 秘書裝束: ${skins.find(s => s.id === currentSkin)?.name || '未設定'}`,
+        submenu: skins.map(skin => ({
+          label: skin.name,
+          type: 'radio',
+          checked: currentSkin === skin.id,
+          click: () => {
+            this.configManager.setMascotSkin(skin.id);
+            this.monitorService.showToast('換裝成功', `小秘書已換上: ${skin.name}`);
+            this.updateMenu();
+          }
+        }))
+      });
+    }
     template.push({
       label: '🗓️ 設定 iCloud 行事曆', click: async () => {
         const url = await this._promptIcloudUrl();
@@ -236,7 +262,15 @@ class TrayManager {
     let secretaryBase64 = '';
     try {
       const gender = this.configManager.getMascotGender();
-      const fileName = gender === 'male' ? 'secretary_male.png' : 'secretary.png';
+      const skin = this.configManager.getMascotSkin();
+      let fileName = 'secretary.png';
+
+      if (gender === 'male') {
+        fileName = 'secretary_male.png';
+      } else if (skin !== 'default') {
+        fileName = `secretary_${skin}.png`;
+      }
+
       const imgPath = path.join(__dirname, '../assets', fileName);
       if (fs.existsSync(imgPath)) {
         secretaryBase64 = `data:image/png;base64,${fs.readFileSync(imgPath).toString('base64')}`;
