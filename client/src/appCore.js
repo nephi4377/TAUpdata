@@ -238,17 +238,20 @@ class AppCore {
      * 註冊 IPC 處理 (將原本 main.js 的 handlers 移入)
      */
     setupIpcHandlers() {
-        // 清除舊的才能重新註冊 (熱更新必備)
+        // 清除舊的才能重新註冊 (熱更新必備，防止 Attempted to register a second handler 錯誤)
         const channels = [
             'get-status', 'pause-monitor', 'resume-monitor', 'get-hourly-stats',
             'get-top-apps', 'open-data-folder', 'admin-login-verify',
             'fetch-team-status', 'fetch-history-data', 'open-link-window', 'open-dashboard-window',
-            'get-local-tasks', 'add-local-task', 'update-local-task', 'delete-local-task'
+            'get-local-tasks', 'add-local-task', 'update-local-task', 'delete-local-task',
+            'get-icloud-events', 'direct-checkin'
         ];
         channels.forEach(ch => ipcMain.removeHandler(ch));
+
         ipcMain.removeAllListeners('admin-login-verify');
         ipcMain.removeAllListeners('fetch-team-status');
         ipcMain.removeAllListeners('fetch-history-data');
+        ipcMain.removeAllListeners('refresh-stats'); // 關鍵：清除 refresh-stats 事件監聽
 
         const { monitorService, storageService, configManager, checkinService, reminderService } = this.services;
 
@@ -275,11 +278,30 @@ class AppCore {
             return res;
         });
         ipcMain.handle('update-local-task', (e, { id, status, title }) => storageService?.updateLocalTask(id, status, title));
-        ipcMain.handle('get-icloud-events', () => {
-            if (!this.services.reminderService) return [];
-            return this.services.reminderService.reminders.filter(r => r.isIcloud);
-        });
         ipcMain.handle('delete-local-task', (e, id) => storageService?.deleteLocalTask(id));
+        ipcMain.handle('get-icloud-events', async () => {
+            if (!reminderService) return [];
+            return reminderService.reminders.filter(r => r.isIcloud);
+        });
+
+        // 打卡與統計
+        ipcMain.handle('direct-checkin', async () => {
+            if (!checkinService) return { success: false, message: '打卡服務未啟動' };
+            const bound = configManager.getBoundEmployee();
+            if (!bound) return { success: false, message: '尚未綁定員工' };
+            const res = await checkinService.directCheckin(bound.userId, bound.userName);
+            if (res && res.success) {
+                const info = await checkinService.getWorkInfo(bound.userId);
+                if (info.success) configManager.setTodayWorkInfo(info.data);
+            }
+            return res;
+        });
+
+        ipcMain.on('refresh-stats', (event, options = {}) => {
+            if (this.services.trayManager) {
+                this.services.trayManager.showStatsWindow(options && options.isManual === true);
+            }
+        });
 
         ipcMain.on('admin-login-verify', (e, p) => e.reply('admin-login-result', configManager.verifyAdminPassword(p)));
         ipcMain.on('fetch-team-status', async (e) => {

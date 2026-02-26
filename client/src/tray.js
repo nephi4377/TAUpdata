@@ -69,23 +69,7 @@ class TrayManager {
   }
 
   _registerIpcHandlers() {
-    ipcMain.removeAllListeners('refresh-stats');
-    ipcMain.on('refresh-stats', (event, options = {}) => {
-      this.showStatsWindow(options && options.isManual === true);
-    });
-
-    ipcMain.removeHandler('direct-checkin');
-    ipcMain.handle('direct-checkin', async () => {
-      if (!this.checkinService) return { success: false, message: '打卡服務未啟動' };
-      const bound = this.configManager.getBoundEmployee();
-      if (!bound) return { success: false, message: '尚未綁定員工' };
-      const res = await this.checkinService.directCheckin(bound.userId, bound.userName);
-      if (res && res.success) {
-        const info = await this.checkinService.getWorkInfo(bound.userId);
-        if (info.success) this.configManager.setTodayWorkInfo(info.data);
-      }
-      return res;
-    });
+    // 已移回 AppCore 統一處理，防止熱更新衝突
   }
 
   async init() {
@@ -134,11 +118,19 @@ class TrayManager {
     // 恢復整合主控台連結
     template.push({ label: '🖥️ 開啟整合主控台', click: () => { shell.openExternal('https://info.tanxin.space/index.html'); } });
 
+    // 管理員與設定
+    if (this.configManager.isAdmin()) {
+      template.push({ label: '⚙️ 管理員主控台', click: () => this.adminDashboard?.show() });
+    }
+
     // 性別設定 (僅保留男女大項)
     template.push({
       label: `🎭 祕書性別: ${gender === 'male' ? '🤵 男版' : '👩 女版'}`,
       click: () => { this.configManager.setMascotGender(gender === 'male' ? 'female' : 'male'); this.updateMenu(); }
     });
+
+    template.push({ type: 'separator' });
+    template.push({ label: '👤 切換使用者 (重新綁定)', click: () => this.setupWindow('setup') });
 
     template.push({ type: 'separator' }, { label: '🔄 檢查更新', click: () => this.app.emit('check-for-updates-manual') });
     this.tray.setContextMenu(Menu.buildFromTemplate(template));
@@ -169,6 +161,7 @@ class TrayManager {
       boundEmployee: this.configManager.getBoundEmployee(),
       workInfo: this.configManager.getTodayWorkInfo(),
       localTasks: await this.storageService.getLocalTasks(),
+      icloudEvents: this.reminderService ? this.reminderService.reminders.filter(r => r.isIcloud) : [],
       version: versionService.getEffectiveVersion(),
       mascotUrl: mascotPath || `https://raw.githubusercontent.com/nephi4377/TAUpdata/master/client/assets/${fname}`
     };
@@ -263,19 +256,42 @@ class TrayManager {
           document.getElementById('p-f').style.width = r + '%';
           document.getElementById('p-t').innerText = '當前生產力：' + r + '%';
 
-          // 專業祕書語氣 (移除主人稱謂，加入行程回報)
+          // 擴充對話庫 (10+ 隨機鼓勵)
+          const quotes = [
+            "今天的工作進行得如何呢？記得每小時起來拉伸一下喔！🏃‍♂️",
+            "看到您這麼專注，我也得更努力幫您打點行程了！💪",
+            "穩定發揮中！休息是為了走更長的路，來杯咖啡嗎？☕",
+            "只要每天進步一點點，最後都會變成巨大的成就！✨",
+            "今天的效率相當不錯喔，保持這個節奏！🚀",
+            "累了嗎？閉上眼睛轉動一下眼球，保護好視力喔。👁️",
+            "您專注工作的樣子最帥氣/迷人了，加油！🔥",
+            "別忘了多喝水，大腦水分充足會更有創意喔！💧",
+            "目前進度穩定，放寬心，我們一項一項來完成。📅",
+            "小提醒：您的健康是最高優先級，別太拼命了喔。❤️"
+          ];
+
+          // 判斷提醒行程
           const tasks = d.localTasks || [];
+          const icloud = d.icloudEvents || [];
           const pendingCount = tasks.filter(t => t.status !== 'completed').length;
-          let m = "工作一切順利嗎？加油喔！✨";
-          if (pendingCount > 0) m = "今天還有 " + pendingCount + " 項待辦行程需要留意喔，加油！💪";
-          else if (r >= 80) m = "今天的效率非常出色，保持這個步調！🚀";
-          else if (r >= 50) m = "穩定發揮中，需要休息一下再繼續嗎？☕";
+          const upcomingCal = icloud.filter(e => !e.completed).length;
+
+          let m = quotes[Math.floor(Math.random() * quotes.length)];
+          if (upcomingCal > 0) m = "偵測到由 iCloud 取得的行事曆行程，請記得查看喔！📅";
+          else if (pendingCount > 0) m = "今天還有 " + pendingCount + " 項待辦行程需要留意喔，加油！💪";
+          else if (r >= 85) m = "今天的生產力爆表啦！您真是工作效率達人！🏅";
+          
           document.getElementById('msg').innerText = m;
 
           let th = '';
+          // 顯示 iCloud 行程 (置頂)
+          icloud.forEach(e => {
+             th += '<div style="display:flex; justify-content:space-between; padding:8px; border-bottom:1px solid rgba(78,205,196,0.3); background:rgba(78,205,196,0.05);"><span>📅 [行事曆] ' + e.title + '</span><span style="font-size:10px; color:#4ecdc4;">' + (e.time||'') + '</span></div>';
+          });
+          // 顯示本地待辦
           tasks.forEach(t => { 
             const isC = t.status === 'completed';
-            th += '<div style="display:flex; justify-content:space-between; padding:8px; border-bottom:1px solid rgba(255,255,255,0.05);'+(isC?'opacity:0.4;':'')+'"><span>' + (isC?'✅':'📌') + ' ' + t.title + '</span><button onclick="toggle('+t.id+', \\''+(isC?'pending':'completed')+'\\')">'+(isC?'↩️':'✅')+'</button></div>';
+            th += '<div style="display:flex; justify-content:space-between; padding:8px; border-bottom:1px solid rgba(255,255,255,0.05);'+(isC?'opacity:0.4;':'')+'"><span>' + (isC?'✅':'📌') + ' ' + t.title + '</span>' + (!isC ? '<button onclick="toggle('+t.id+', \\''+(isC?'pending':'completed')+'\\')">'+(isC?'↩️':'✅')+'</button>' : '') + '</div>';
           });
           document.getElementById('t-l').innerHTML = th || '<div style="text-align:center; color:#555;">今日尚無待辦事項</div>';
         });
