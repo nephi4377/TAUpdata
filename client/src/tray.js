@@ -124,7 +124,7 @@ class TrayManager {
       workInfo: this.configManager.getTodayWorkInfo(),
       localTasks: await this.storageService.getLocalTasks(),
       version: versionService.getEffectiveVersion(),
-      mascotUrl: `https://raw.githubusercontent.com/nephi4377/TAUpdata/main/client/assets/${fname}`
+      mascotUrl: `https://raw.githubusercontent.com/nephi4377/TAUpdata/master/client/assets/${fname}`
     };
   }
 
