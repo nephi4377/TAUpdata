@@ -22,7 +22,7 @@ class TrayManager {
     this.tray = null;
     this.statsWindow = null;
     this._registerIpcHandlers();
-    console.log('[Tray] 系統功能已全面還原 (v1.11.23)');
+    console.log('[Tray] 系統功能已全面還原 (v1.11.24)');
   }
 
   destroy() {
@@ -231,15 +231,13 @@ class TrayManager {
           <div class="speech" id="msg">正在下載最新行程...</div>
         </div>
 
-        <div class="card" id="user-card">
-          <h2>👤 使用者: ${boundEmployee ? boundEmployee.userName : '未登入'}</h2>
-          <div class="grid2">
-            <div>上班: <span id="ck-in">${workInfo?.checkinTime || '--:--'}</span></div>
-            <div>下班: <span id="ck-out">${workInfo?.expectedOffTime || '--:--'}</span></div>
+        <div class="card">
+          <h2 id="user-name-display">👤 正在加載...</h2>
+          <div class="grid2" style="margin-bottom:15px;">
+            <div>上班: <span id="ck-in">--:--</span></div>
+            <div>下班: <span id="ck-out">--:--</span></div>
           </div>
-          <div style="display:flex; gap:10px; margin-top:20px;">
-            ${checkinBtn}
-          </div>
+          <div id="user-card-area"></div>
         </div>
 
         <div class="card">
@@ -330,11 +328,20 @@ class TrayManager {
         }
 
         function updateUI(d) {
-          // 更新數值
-          document.getElementById('w-v').innerText = fmt(d.stats.work);
-          document.getElementById('l-v').innerText = fmt(d.stats.leisure);
-          document.getElementById('o-v').innerText = fmt(d.stats.other);
-          
+          // 更新使用者卡片
+          const nameEl = document.getElementById('user-name-display');
+          const areaEl = document.getElementById('user-card-area');
+          if (d.boundEmployee) {
+            nameEl.innerText = '👤 使用者: ' + d.boundEmployee.userName;
+            areaEl.innerHTML = '<div style="display:flex; gap:10px; width:100%">' +
+                '<button class="btn ok" onclick="doCheckin()" id="checkin-btn" style="flex:2">✅ 打卡發送</button>' +
+                '<button class="btn info" onclick="window.reminderAPI.openDashboardWindow()" style="flex:1">🖥️ 主控台</button>' +
+              '</div>';
+          } else {
+            nameEl.innerText = '⚠️ 未連結打卡帳號';
+            areaEl.innerHTML = '<button class="btn" style="background:#7aa2f7; width:100%;" onclick="window.reminderAPI.openLinkWindow()">📲 前往綁定 (LINE)</button>';
+          }
+
           if (d.workInfo) {
             if(document.getElementById('ck-in')) document.getElementById('ck-in').innerText = d.workInfo.checkinTime || '--:--';
             if(document.getElementById('ck-out')) document.getElementById('ck-out').innerText = d.workInfo.expectedOffTime || '--:--';

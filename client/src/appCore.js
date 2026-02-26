@@ -1,4 +1,4 @@
-// v1.1 - 2026-02-23 15:45 (Asia/Taipei)
+778// v1.1 - 2026-02-23 15:45 (Asia/Taipei)
 // 修改內容: 完善 AppCore，遷移所有業務邏輯、IPC 處理程序與定時排程。
 // 使 main.js 成為純粹的啟動殼 (Launcher Shell)。
 
@@ -263,11 +263,13 @@ class AppCore {
         ipcMain.handle('get-hourly-stats', () => storageService?.getHourlyStats());
         ipcMain.handle('get-top-apps', (e, d) => storageService?.getRecentTopApps(d || 7));
         ipcMain.handle('open-data-folder', () => shell.openPath(app.getPath('userData')));
-        ipcMain.handle('open-link-window', () => {
-            shell.openExternal('https://liff.line.me/2007974938-jVxn6y37?source=hub');
+        ipcMain.handle('open-link-window', async () => {
+            log.info('[Core] 正在開啟帳號綁定頁面 (LINE LIFF)...');
+            return await shell.openExternal('https://liff.line.me/2007974938-jVxn6y37?source=hub');
         });
-        ipcMain.handle('open-dashboard-window', () => {
-            shell.openExternal('https://info.tanxin.space/index.html');
+        ipcMain.handle('open-dashboard-window', async () => {
+            log.info('[Core] 正在開啟整合主控台 (Info Console)...');
+            return await shell.openExternal('https://info.tanxin.space/index.html');
         });
 
         // 個人待辦事項 IPC
