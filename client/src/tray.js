@@ -4,6 +4,7 @@
 const { Tray, Menu, nativeImage, Notification, app, BrowserWindow, shell, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const https = require('https');
 const { versionService } = require('./versionService');
 
 class TrayManager {
@@ -32,6 +33,39 @@ class TrayManager {
     if (this.statsWindow && !this.statsWindow.isDestroyed()) {
       this.statsWindow.close();
     }
+  }
+
+  /**
+   * 確保小秘書影像已下載至本地快取
+   * @param {string} fname 檔案名稱
+   * @returns {Promise<string>} 本地路徑
+   */
+  async ensureMascotCached(fname) {
+    const cacheDir = path.join(this.app.getPath('userData'), 'mascot_cache');
+    if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
+
+    const localPath = path.join(cacheDir, fname);
+    if (fs.existsSync(localPath)) return localPath;
+
+    // 如果本地不存在，從 GitHub 下載
+    const url = `https://raw.githubusercontent.com/nephi4377/TAUpdata/master/client/assets/${fname}`;
+    console.log(`[Tray] 正在下載小秘書快取: ${url}`);
+
+    return new Promise((resolve) => {
+      const file = fs.createWriteStream(localPath);
+      https.get(url, (response) => {
+        response.pipe(file);
+        file.on('finish', () => {
+          file.close();
+          console.log(`[Tray] 小秘書快取下載完成: ${fname}`);
+          resolve(localPath);
+        });
+      }).on('error', (err) => {
+        fs.unlink(localPath, () => { }); // 失敗則刪除殘缺檔案
+        console.error(`[Tray] 快取下載失敗: ${err.message}`);
+        resolve(''); // 回傳空字串代表失敗，UI 會降級處理
+      });
+    });
   }
 
   _registerIpcHandlers() {
@@ -123,6 +157,10 @@ class TrayManager {
       fname = 'secretary_male.png';
     }
 
+    // 執行快取檢查 (若無網路且無快取則會回傳空)
+    const localPath = await this.ensureMascotCached(fname);
+    const mascotPath = localPath ? `file://${localPath.replace(/\\/g, '/')}` : '';
+
     return {
       stats: await this.storageService.getTodayStats(),
       hourlyStats: await this.storageService.getHourlyStats(),
@@ -132,7 +170,7 @@ class TrayManager {
       workInfo: this.configManager.getTodayWorkInfo(),
       localTasks: await this.storageService.getLocalTasks(),
       version: versionService.getEffectiveVersion(),
-      mascotUrl: `https://raw.githubusercontent.com/nephi4377/TAUpdata/master/client/assets/${fname}`
+      mascotUrl: mascotPath || `https://raw.githubusercontent.com/nephi4377/TAUpdata/master/client/assets/${fname}`
     };
   }
 
