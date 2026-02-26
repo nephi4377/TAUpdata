@@ -160,6 +160,18 @@ class TrayManager {
     }
 
     template.push({ label: '🔄 切換使用者', click: async () => { if (this.setupWindow) { const sel = await this.setupWindow.show('switch'); if (sel) { this.monitorService?.showToast('切換成功', `使用者已切換為: ${sel.userName}`); this.updateMenu(); } } } });
+
+    // [v1.11.10] 切換秘書性別
+    const currentGender = this.configManager.getMascotGender();
+    template.push({
+      label: `🎭 秘書形象: ${currentGender === 'male' ? '🤵 韓系帥哥' : '👩 幹練美女'}`,
+      click: () => {
+        const next = currentGender === 'male' ? 'female' : 'male';
+        this.configManager.setMascotGender(next);
+        this.monitorService.showToast('形象切換', `小秘書已變身為: ${next === 'male' ? '帥哥秘書' : '美女秘書'}`);
+        this.updateMenu();
+      }
+    });
     template.push({
       label: '🗓️ 設定 iCloud 行事曆', click: async () => {
         const url = await this._promptIcloudUrl();
@@ -223,7 +235,9 @@ class TrayManager {
     // 動態讀取小秘書圖片並轉為 Base64
     let secretaryBase64 = '';
     try {
-      const imgPath = path.join(__dirname, '../assets/secretary.png');
+      const gender = this.configManager.getMascotGender();
+      const fileName = gender === 'male' ? 'secretary_male.png' : 'secretary.png';
+      const imgPath = path.join(__dirname, '../assets', fileName);
       if (fs.existsSync(imgPath)) {
         secretaryBase64 = `data:image/png;base64,${fs.readFileSync(imgPath).toString('base64')}`;
       }

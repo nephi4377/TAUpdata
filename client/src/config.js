@@ -112,7 +112,10 @@ class ConfigManager {
                 icloudCalendarUrl: null,
 
                 // [v1.10.2] 分店設定
-                storeLocations: STORE_LOCATIONS
+                storeLocations: STORE_LOCATIONS,
+
+                // [v1.11.10] 秘書性別設定 (female / male)
+                mascotGender: 'female'
             }
         };
 
@@ -357,6 +360,16 @@ class ConfigManager {
     // [v1.10.2] 取得分店位置
     getStoreLocations() {
         return this.store.get('storeLocations') || STORE_LOCATIONS;
+    }
+
+    // [v1.11.10] 秘書性別管理
+    getMascotGender() {
+        return this.store.get('mascotGender') || 'female';
+    }
+
+    setMascotGender(gender) {
+        this.store.set('mascotGender', gender);
+        console.log(`[Config] 秘書性別已切換為: ${gender}`);
     }
 }
 
