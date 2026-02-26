@@ -14,21 +14,18 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Install Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 18
-
       - name: Create and Upload Patch Zip
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
           cd client
           $VERSION = node -p "require('./package.json').version"
-          echo "Packaging version $VERSION"
-          # 打包 src 資料夾作為熱更新補丁
+          echo "Processing version $VERSION"
           Compress-Archive -Path src -DestinationPath patch-v${VERSION}.zip -Force
-          # 上傳到對應的 Release
-          gh release upload v$VERSION patch-v${VERSION}.zip --clobber
-          # 將此 Release 設為正式發佈 (取代 Draft)
-          gh release edit v$VERSION --draft=false --latest=true
+          
+          # 確保 Release 存在，若不存在則建立
+          gh release create v$VERSION --title "Release v$VERSION" --notes "Automated release for version $VERSION" --repo nephi4377/TAUpdata 2>$null
+          
+          # 上傳檔案並設為正式發佈
+          gh release upload v$VERSION patch-v${VERSION}.zip --clobber --repo nephi4377/TAUpdata
+          gh release edit v$VERSION --draft=false --latest=true --repo nephi4377/TAUpdata

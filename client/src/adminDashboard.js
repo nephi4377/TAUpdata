@@ -48,7 +48,7 @@ class AdminDashboard {
         this.window.loadFile(uiPath);
 
         // 如果需要偵錯，可以暫時取消註解
-        // this.window.webContents.openDevTools();
+        this.window.webContents.openDevTools();
     }
 
     _stopAutoUpdate() { }
