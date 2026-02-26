@@ -55,10 +55,15 @@ class TrayManager {
   createTrayIcon() {
     const size = 16;
     const canvas = Buffer.alloc(size * size * 4);
-    for (let i = 0; i < size / 2; i++) {
-      for (let j = 0; j < size / 2; j++) {
-        const idx = ((size / 4 + i) * size + (size / 4 + j)) * 4;
-        canvas[idx] = 76; canvas[idx + 1] = 175; canvas[idx + 2] = 80; canvas[idx + 3] = 255;
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const idx = (y * size + x) * 4;
+        const dist = Math.sqrt((x - 8) ** 2 + (y - 8) ** 2);
+        if (dist < 6) {
+          canvas[idx] = 76; canvas[idx + 1] = 175; canvas[idx + 2] = 80; canvas[idx + 3] = 255;
+        } else {
+          canvas[idx] = 0; canvas[idx + 1] = 0; canvas[idx + 2] = 0; canvas[idx + 3] = 0;
+        }
       }
     }
     return nativeImage.createFromBuffer(canvas, { width: size, height: size });
