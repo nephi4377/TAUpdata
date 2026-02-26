@@ -1,5 +1,5 @@
-// v1.11.8 - 2026-02-26 19:55 (Asia/Taipei)
-// 修改內容: 徹底修復語法錯誤，補回結束程式選單，整合 iCloud 事件顯示與自動更新巡檢。
+// v1.11.10 - 2026-02-26 20:18 (Asia/Taipei)
+// 修改內容: 徹底修復模板語法字串錯誤 (移除所有錯誤的反斜線)，確保數據與小秘書顯示正常。
 
 const { Tray, Menu, nativeImage, Notification, app, BrowserWindow, shell, ipcMain } = require('electron');
 const path = require('path');
@@ -20,7 +20,6 @@ class TrayManager {
     this.tray = null;
     this.statsWindow = null;
     this.updateInterval = null;
-    this.lastPermissionCheck = 0;
     this._registerIpcHandlers();
 
     console.log('[Tray] 托盤管理服務已建立');
@@ -160,7 +159,7 @@ class TrayManager {
       template.push({ label: '📊 管理員面板', click: () => this.adminDashboard?.show() });
     }
 
-    template.push({ label: '🔄 切換使用者', click: async () => { if (this.setupWindow) { const sel = await this.setupWindow.show('switch'); if (sel) { this.monitorService?.showToast('切換成功', `使用者已切換為: \${sel.userName}`); this.updateMenu(); } } } });
+    template.push({ label: '🔄 切換使用者', click: async () => { if (this.setupWindow) { const sel = await this.setupWindow.show('switch'); if (sel) { this.monitorService?.showToast('切換成功', `使用者已切換為: ${sel.userName}`); this.updateMenu(); } } } });
     template.push({
       label: '🗓️ 設定 iCloud 行事曆', click: async () => {
         const url = await this._promptIcloudUrl();
@@ -179,7 +178,7 @@ class TrayManager {
 
     const contextMenu = Menu.buildFromTemplate(template);
     this.tray.setContextMenu(contextMenu);
-    this.tray.setToolTip(`添心生產力助手 v\${this.getEffectiveVersion()} - \${boundEmployee?.userName || ''}`);
+    this.tray.setToolTip(`添心生產力助手 v${this.getEffectiveVersion()} - ${boundEmployee?.userName || ''}`);
   }
 
   async showStatsWindow(isManual = true) {
@@ -218,10 +217,10 @@ class TrayManager {
   }
 
   async generateStatsHtml(data) {
-    const { stats, hourlyStats, topApps, browserHistory, status, boundEmployee, workInfo, reminderStatus, localTasks } = data;
+    const { stats, hourlyStats, topApps, browserHistory, status, boundEmployee, workInfo, reminderStatus, localTasks, version } = data;
     const rate = stats.total > 0 ? Math.round((stats.work / stats.total) * 100) : 0;
 
-    // 動態讀取小秘書圖片並轉為 Base64 確保顯示穩定
+    // 動態讀取小秘書圖片並轉為 Base64
     let secretaryBase64 = '';
     try {
       const imgPath = path.join(__dirname, '../assets/secretary.png');
@@ -256,44 +255,13 @@ class TrayManager {
       * { margin:0; padding:0; box-sizing:border-box; font-family:'Microsoft JhengHei', sans-serif; }
       body { background:#1a1a2e; color:#eee; padding:20px; overflow-x:hidden; }
       .container { position: relative; max-width: 660px; margin: 0 auto; }
-      
-      /* 小秘書動畫版樣式 */
-      .secretary-box {
-        display: flex; align-items: center; justify-content: center;
-        gap: 15px; margin-bottom: 25px; animation: fadeInDown 0.8s ease-out;
-      }
-      .secretary-avatar {
-        width: 100px; height: 160px; border-radius: 12px;
-        background: url(${secretaryBase64}) center/cover;
-        border: 2px solid #4ecdc4; box-shadow: 0 4px 15px rgba(0,0,0,0.3);
-        animation: float 4s ease-in-out infinite;
-      }
-      .secretary-speech {
-        background: white; color: #333; padding: 12px 18px;
-        border-radius: 15px 15px 15px 0; position: relative;
-        font-size: 14px; font-weight: bold; max-width: 250px;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.2);
-        margin-top: -60px; /* 向上偏移與半身像視線對齊 */
-        animation: speechFloat 4s ease-in-out infinite 0.5s;
-      }
-      .secretary-speech::after {
-        content: ''; position: absolute; left: -10px; bottom: 0;
-        border-width: 10px 10px 0 0; border-style: solid; border-color: white transparent;
-      }
-
-      @keyframes float {
-        0%, 100% { transform: translateY(0); }
-        50% { transform: translateY(-8px); }
-      }
-      @keyframes speechFloat {
-        0%, 100% { transform: translateY(0); }
-        50% { transform: translateY(-4px); }
-      }
-      @keyframes fadeInDown {
-        from { opacity: 0; transform: translateY(-20px); }
-        to { opacity: 1; transform: translateY(0); }
-      }
-
+      .secretary-box { display: flex; align-items: center; justify-content: center; gap: 15px; margin-bottom: 25px; animation: fadeInDown 0.8s ease-out; }
+      .secretary-avatar { width: 100px; height: 160px; border-radius: 12px; background: url(${secretaryBase64}) center/cover; border: 2px solid #4ecdc4; box-shadow: 0 4px 15px rgba(0,0,0,0.3); animation: float 4s ease-in-out infinite; }
+      .secretary-speech { background: white; color: #333; padding: 12px 18px; border-radius: 15px 15px 15px 0; position: relative; font-size: 14px; font-weight: bold; max-width: 250px; box-shadow: 0 4px 15px rgba(0,0,0,0.2); margin-top: -60px; animation: speechFloat 4s ease-in-out infinite 0.5s; }
+      .secretary-speech::after { content: ''; position: absolute; left: -10px; bottom: 0; border-width: 10px 10px 0 0; border-style: solid; border-color: white transparent; }
+      @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
+      @keyframes speechFloat { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
+      @keyframes fadeInDown { from { opacity: 0; transform: translateY(-20px); } to { opacity: 1; transform: translateY(0); } }
       .stats-card { background:rgba(255,255,255,0.1); border-radius:12px; padding:20px; margin-bottom:20px; }
       h1 { text-align:center; color:#4ecdc4; margin-bottom:5px; font-size: 22px; }
       .status-badge { display:inline-block; padding:4px 12px; border-radius:12px; font-size:12px; margin-bottom:15px; }
@@ -311,7 +279,6 @@ class TrayManager {
       .hour-bar.work { background:#4caf50; } .hour-bar.leisure { background:#f7768e; } .hour-bar.other { background:#9e9e9e; }
     </style>
     <script>
-      const { ipcRenderer } = window.reminderAPI || {};
       function formatMinutes(m) { if(!m) return '0分'; if(m<60) return m+'分'; return Math.floor(m/60)+'h '+(m%60)+'m'; }
       async function toggleTaskStatus(id, s) { await window.reminderAPI.updateLocalTask(id, s); window.reminderAPI.refreshStats(); }
       async function deleteTask(id) { if(confirm('確定刪除？')){ await window.reminderAPI.deleteLocalTask(id); window.reminderAPI.refreshStats(); } }
@@ -334,7 +301,6 @@ class TrayManager {
           document.querySelector('.productivity-fill').style.width = r + '%';
           document.getElementById('prod-txt').innerText = '生產力指數：' + r + '%';
           
-          // 智能小秘書對話
           const msgEl = document.getElementById('secretary-msg');
           if (msgEl) {
             if (r >= 80) msgEl.innerText = "太厲害了！今天的你是生產力大神！🚀";
@@ -342,7 +308,7 @@ class TrayManager {
             else if (r >= 30) msgEl.innerText = "加油加油，小秘書會一直陪著你的！💪";
             else msgEl.innerText = "累了嗎？起來動一動，等下再繼續吧～🍃";
           }
-          
+
           const list = document.getElementById('local-tasks-list');
           if(list && data.localTasks) {
             (async () => {
@@ -351,8 +317,7 @@ class TrayManager {
               icloud.forEach(ev => { h += '<div class="reminder-row" style="border-left:4px solid #4caf50;"><span style="margin-right:10px;">🍏</span><div style="flex:1;"><b>[雲端] ' + ev.title.replace('[Apple行事曆] ', '') + '</b><br><small>' + ev.timeStr + '</small></div></div>'; });
               data.localTasks.forEach(t => { 
                 const isC = t.status === 'completed';
-                const statusCls = isC ? 'completed' : '';
-                h += '<div class="reminder-row ' + statusCls + '"><span>📌</span><div style="flex:1;">' + t.title + '<br><small>' + (t.due_date || '') + ' ' + (t.due_time || '') + '</small></div><button class="complete-btn" onclick="toggleTaskStatus(' + t.id + ', \'' + (isC ? 'pending' : 'completed') + '\')">' + (isC ? '↩️' : '✅') + '</button><button class="complete-btn" style="background:#f7768e; margin-left:5px;" onclick="deleteTask(' + t.id + ')">🗑️</button></div>';
+                h += '<div class="reminder-row ' + (isC ? 'completed' : '') + '"><span>📌</span><div style="flex:1;">' + t.title + '<br><small>' + (t.due_date || '') + ' ' + (t.due_time || '') + '</small></div><button class="complete-btn" onclick="toggleTaskStatus(' + t.id + ', \'' + (isC ? 'pending' : 'completed') + '\')">' + (isC ? '↩️' : '✅') + '</button><button class="complete-btn" style="background:#f7768e; margin-left:5px;" onclick="deleteTask(' + t.id + ')">🗑️</button></div>';
               });
               list.innerHTML = h || '<div style="text-align:center; padding:10px; color:#888;">尚無待辦事項</div>';
             })();
@@ -366,16 +331,26 @@ class TrayManager {
           <div class="secretary-speech" id="secretary-msg">工作辛苦了，喝杯咖啡休息一下吧！☕</div>
         </div>
         <h1>📊 今日生產力報告</h1>
-        <div style="text-align:center; color:#888; font-size:12px; margin-bottom:15px;">v1.11.8 (Latest)</div>
-        <div style="text-align:center;"><div class="status-badge \${status.isPaused?'paused':'running'}">\${status.isPaused?'⏸️ 暫停中':'🟢 監測中'} · 已取樣 \${status.sampleCount}</div></div>
-        \${checkinHtml}
+        <div style="text-align:center; color:#888; font-size:12px; margin-bottom:15px;">v${version || '1.11.10'} (Latest)</div>
+        <div style="text-align:center;"><div class="status-badge ${status.isPaused ? 'paused' : 'running'}">${status.isPaused ? '⏸️ 暫停中' : '🟢 監測中'} · 已取樣 ${status.sampleCount}</div></div>
+        ${checkinHtml}
+        <div class="stats-card">
+          <h2>⏱️ 時間統計</h2>
+          <div class="summary-grid">
+            <div class="summary-item"><div class="summary-value" id="work-val">${this.formatMinutes(stats.work)}</div><div style="color:#888;font-size:12px;">工作</div></div>
+            <div class="summary-item"><div class="summary-value" id="leisure-val" style="color:#f7768e;">${this.formatMinutes(stats.leisure)}</div><div style="color:#888;font-size:12px;">休閒</div></div>
+            <div class="summary-item"><div class="summary-value" id="other-val" style="color:#9e9e9e;">${this.formatMinutes(stats.other)}</div><div style="color:#888;font-size:12px;">其他</div></div>
+          </div>
+          <div class="productivity-bar"><div class="productivity-fill" style="width: ${rate}%"></div></div>
+          <div id="prod-txt" style="text-align:center; font-size:14px; color:#888;">生產力指數：${rate}%</div>
+        </div>
         <div class="stats-card">
           <h2>📋 進階提醒事項</h2>
           <div style="background:rgba(255,255,255,0.05); padding:15px; border-radius:8px; margin-bottom:15px;">
             <input type="text" id="local-task-input" placeholder="提醒內容..." style="width:100%; padding:8px; background:#1a1b26; border:1px solid #3d59a1; color:white; border-radius:4px; margin-bottom:10px;">
             <div style="display:flex; gap:10px; font-size:12px; margin-bottom:10px;">
-              🗓️ <input type="date" id="reminder-dt" value="\${new Date().toISOString().split('T')[0]}" style="background:#1a1b26; color:white; border:1px solid #3d59a1; padding:2px;">
-              ⏰ <input type="time" id="reminder-tm" value="\${new Date().toTimeString().split(' ')[0].substring(0,5)}" style="background:#1a1b26; color:white; border:1px solid #3d59a1; padding:2px;">
+              🗓️ <input type="date" id="reminder-dt" value="${new Date().toISOString().split('T')[0]}" style="background:#1a1b26; color:white; border:1px solid #3d59a1; padding:2px;">
+              ⏰ <input type="time" id="reminder-tm" value="${new Date().toTimeString().split(' ')[0].substring(0, 5)}" style="background:#1a1b26; color:white; border:1px solid #3d59a1; padding:2px;">
             </div>
             <div style="display:flex; gap:10px; font-size:12px; margin-bottom:10px;">
               🔔 <select id="reminder-ld" style="background:#1a1b26; color:white;"><option value="0">準時</option><option value="10" selected>10分</option></select>
@@ -383,19 +358,15 @@ class TrayManager {
             </div>
             <button class="complete-btn" style="width:100%; height:36px; background:#4caf50;" onclick="doAddLocalTask()">➕ 新增提醒</button>
           </div>
-          <div id="local-tasks-list">\${localTasks.map(t=>\`<div class="reminder-row \${t.status==='completed'?'completed':''}"><span>📌</span><div style="flex:1;">\${t.title}<br><small>\${t.due_date||''} \${t.due_time||''}</small></div><button class="complete-btn" onclick="toggleTaskStatus(\${t.id}, '\${t.status==='completed'?'pending':'completed'}')">\${t.status==='completed'?'↩️':'✅'}</button></div>\`).join('')}</div>
-        </div>
-        <div class="stats-card">
-          <h2>⏱️ 時間統計</h2>
-          <div class="summary-grid">
-            <div class="summary-item"><div class="summary-value" id="work-val">\${this.formatMinutes(stats.work)}</div><div style="color:#888;font-size:12px;">工作</div></div>
-            <div class="summary-item"><div class="summary-value" id="leisure-val" style="color:#f7768e;">\${this.formatMinutes(stats.leisure)}</div><div style="color:#888;font-size:12px;">休閒</div></div>
-            <div class="summary-item"><div class="summary-value" id="other-val" style="color:#9e9e9e;">\${this.formatMinutes(stats.other)}</div><div style="color:#888;font-size:12px;">其他</div></div>
+          <div id="local-tasks-list">
+            ${localTasks.map(t => {
+      const isC = t.status === 'completed';
+      return `<div class="reminder-row ${isC ? 'completed' : ''}"><span>📌</span><div style="flex:1;">${t.title}<br><small>${t.due_date || ''} ${t.due_time || ''}</small></div><button class="complete-btn" onclick="toggleTaskStatus(${t.id}, '${isC ? 'pending' : 'completed'}')">${isC ? '↩️' : '✅'}</button></div>`;
+    }).join('')}
           </div>
-          <div class="productivity-bar"><div class="productivity-fill" style="width: \${rate}%"></div></div>
-          <div id="prod-txt" style="text-align:center; font-size:14px; color:#888;">生產力指數：\${rate}%</div>
         </div>
-        <div class="stats-card"><h2>📱 應用排行</h2>\${appsHtml||'<div style="text-align:center; color:#888;">尚無資料</div>'}</div>
+        <div class="stats-card"><h2>📱 應用排行</h2>${appsHtml || '<div style="text-align:center; color:#888;">尚無資料</div>'}</div>
+        <div style="text-align:center; margin-top:10px;"><button class="complete-btn" style="background:#3d59a1; width:50%;" onclick="window.reminderAPI.refreshStats()">� 刷新數據</button></div>
       </div>
     </body></html>`;
   }
