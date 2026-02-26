@@ -21,7 +21,17 @@ class TrayManager {
     this.tray = null;
     this.statsWindow = null;
     this._registerIpcHandlers();
-    console.log('[Tray] 系統功能已全面還原 (v1.11.17)');
+    console.log('[Tray] 系統功能已全面還原 (v1.11.19)');
+  }
+
+  destroy() {
+    if (this.tray) {
+      this.tray.destroy();
+      this.tray = null;
+    }
+    if (this.statsWindow && !this.statsWindow.isDestroyed()) {
+      this.statsWindow.close();
+    }
   }
 
   _registerIpcHandlers() {
@@ -139,9 +149,14 @@ class TrayManager {
     this.statsWindow = new BrowserWindow({
       width: 720, height: 880, title: '添心生產力助手 - 詳細統計',
       autoHideMenuBar: true,
+      show: false, // 改為先隱藏，載入完再顯
       webPreferences: { contextIsolation: true, preload: path.join(__dirname, 'reminderPreload.js') }
     });
     this.statsWindow.loadFile(temp);
+    this.statsWindow.once('ready-to-show', () => {
+      this.statsWindow.show();
+      this.statsWindow.webContents.send('update-stats-data', data);
+    });
   }
 
   async generateStatsHtml(data) {
@@ -150,7 +165,7 @@ class TrayManager {
 
     // 還原完整打卡區塊與主控台按鈕
     const checkinHtml = boundEmployee
-      ? `<div class="card"><h2>👤 使用者: ${boundEmployee.userName}</h2><div class="grid2"><div>上班: ${workInfo?.checkinTime || '--:--'}</div><div>下班: ${workInfo?.expectedOffTime || '--:--'}</div></div><div style="display:flex; gap:10px; margin-top:15px;"><button class="btn ok" onclick="doCheckin()">✅ 打卡發送</button><button class="btn info" onclick="window.shell.openExternal('https://info.tanxin.space/index.html')">🖥️ 主控台</button></div></div>`
+      ? `<div class="card"><h2>👤 使用者: ${boundEmployee.userName}</h2><div class="grid2"><div>上班: ${workInfo?.checkinTime || '--:--'}</div><div>下班: ${workInfo?.expectedOffTime || '--:--'}</div></div><div style="display:flex; gap:10px; margin-top:15px;"><button class="btn ok" onclick="doCheckin()">✅ 打卡發送</button><button class="btn info" onclick="window.reminderAPI.openDashboardWindow()">🖥️ 主控台</button></div></div>`
       : `<div class="card" style="border:2px dashed #f7768e; text-align:center;"><h2>⚠️ 未連結打卡帳號</h2><button class="btn" style="background:#7aa2f7; margin-top:10px;" onclick="window.reminderAPI.openLinkWindow()">📲 前往綁定 (LINE)</button></div>`;
 
     return `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>

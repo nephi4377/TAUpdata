@@ -1,7 +1,9 @@
 // v1.7 - 2026-02-02 10:13 (Asia/Taipei)
 // 修改內容: 改用置頂小視窗取代系統通知
 
-const { Notification, dialog, powerMonitor, BrowserWindow, screen } = require('electron');
+const { Notification, dialog, powerMonitor, BrowserWindow, screen, app } = require('electron');
+const path = require('path');
+const fs = require('fs');
 
 // 動態載入 active-win（ESM 模組）
 let activeWin = null;
@@ -426,113 +428,40 @@ class MonitorService {
 
         const primaryDisplay = screen.getPrimaryDisplay();
         const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
-        const windowWidth = 420; // 加寬以容納小秘書
+        const windowWidth = 420;
         const windowHeight = 120;
         const margin = 20;
         const x = margin;
         const y = screenHeight - windowHeight - margin;
 
-        // 單例模式：如果視窗不存在或已銷毀，才建立
+        const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>
+            * { margin:0; padding:0; box-sizing:border-box; font-family:sans-serif; }
+            body { background: rgba(26, 26, 46, 0.98); color:#fff; border-radius:15px; padding:12px; border:1px solid rgba(78,205,196,0.5); box-shadow:0 8px 32px rgba(0,0,0,0.5); height:120px; display:flex; align-items:center; overflow:hidden; }
+            .mascot { width:70px; height:95px; background:url('${mascotUrl}') center/cover; border-radius:8px; border:1px solid #4ecdc4; flex-shrink:0; margin-right:15px; }
+            .content { flex:1; display:flex; flex-direction:column; justify-content:center; }
+            .title { font-size:15px; font-weight:bold; margin-bottom:5px; color:#4ecdc4; }
+            .body { font-size:12px; color:#ddd; line-height:1.5; white-space:pre-wrap; }
+        </style></head><body><div class="mascot"></div><div class="content"><div class="title">${this.escapeHtml(title)}</div><div class="body">${this.escapeHtml(body)}</div></div></body></html>`;
+
+        const tempToast = path.join(app.getPath('userData'), 'toast_v18.html');
+        fs.writeFileSync(tempToast, html, 'utf8');
+
         if (!this.toastWindow || this.toastWindow.isDestroyed()) {
             this.toastWindow = new BrowserWindow({
-                width: windowWidth,
-                height: windowHeight,
-                x: x,
-                y: y,
-                frame: false,
-                transparent: true,
-                alwaysOnTop: true,
-                skipTaskbar: true,
-                resizable: false,
-                movable: false,
-                minimizable: false,
-                maximizable: false,
-                closable: false,
-                show: false,
-                webPreferences: {
-                    nodeIntegration: false,
-                    contextIsolation: true
-                }
+                width: windowWidth, height: windowHeight, x: x, y: y,
+                frame: false, transparent: true, alwaysOnTop: true, skipTaskbar: true,
+                resizable: false, movable: false, minimizable: false, maximizable: false,
+                focusable: false, show: false,
+                webPreferences: { contextIsolation: true }
             });
-
             this.toastWindow.setIgnoreMouseEvents(true);
-
-            // 視窗關閉時僅隱藏
-            this.toastWindow.on('close', (e) => {
-                if (!this.forceClose) {
-                    e.preventDefault();
-                    this.toastWindow.hide();
-                }
-            });
         }
 
-        // HTML 內容 (加入小秘書外掛)
-        const html = `
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: 'Microsoft JhengHei', sans-serif;
-            background: rgba(26, 26, 46, 0.98);
-            color: #fff;
-            border-radius: 15px;
-            padding: 12px;
-            border: 1px solid rgba(78, 205, 196, 0.5);
-            box-shadow: 0 8px 32px rgba(0,0,0,0.5);
-            height: 100vh;
-            display: flex;
-            align-items: center;
-            overflow: hidden;
-        }
-        .mascot {
-            width: 70px;
-            height: 95px;
-            background: url('${mascotUrl}') center/cover;
-            border-radius: 8px;
-            border: 1px solid #4ecdc4;
-            flex-shrink: 0;
-            margin-right: 15px;
-        }
-        .content {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-        }
-        .title {
-            font-size: 15px;
-            font-weight: bold;
-            margin-bottom: 5px;
-            color: #4ecdc4;
-        }
-        .body {
-            font-size: 12px;
-            color: #ddd;
-            line-height: 1.5;
-            white-space: pre-wrap;
-        }
-    </style>
-</head>
-<body>
-    <div class="mascot"></div>
-    <div class="content">
-        <div class="title">${this.escapeHtml(title)}</div>
-        <div class="body">${this.escapeHtml(body)}</div>
-    </div>
-</body>
-</html>
-        `;
-
-        this.toastWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
-
+        this.toastWindow.loadFile(tempToast);
         if (!this.toastWindow.isVisible()) {
             this.toastWindow.showInactive();
         }
 
-        // 重設/啟動 自動隱藏計時器
         if (this.toastHideTimer) clearTimeout(this.toastHideTimer);
 
         // 10 秒後開始偵測動作
