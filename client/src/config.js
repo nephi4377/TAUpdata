@@ -266,6 +266,25 @@ class ConfigManager {
         return false;
     }
 
+    /**
+     * [v1.11.23 修復] 判定當前使用者是否具備管理員權限
+     */
+    isAdmin() {
+        const bound = this.getBoundEmployee();
+        if (!bound) return false;
+
+        // 1. 根據組別判定
+        if (bound.group && (bound.group === 'BOSS' || bound.group === 'Admin')) return true;
+
+        // 2. 根據權限等級判定 (>= 5 為管理員)
+        if (bound.permissionLevel && parseInt(bound.permissionLevel) >= 5) return true;
+
+        // 3. 根據使用者名稱硬編碼 (針對特定管理者)
+        if (bound.userName === '黃俊豪' || bound.userId === 'nephi4377') return true;
+
+        return false;
+    }
+
     // 設定管理者密碼
     setAdminPassword(password) {
         this.store.set('adminPassword', encrypt(password));
