@@ -300,8 +300,6 @@ class AppCore {
         });
         ipcMain.handle('update-local-task', (e, { id, status, title }) => storageService?.updateLocalTask(id, status, title));
 
-        ipcMain.handle('update-local-task', (e, { id, status, title }) => storageService?.updateLocalTask(id, status, title));
-
         // [v5.0] 專業交辦回饋 API 封裝實作
         ipcMain.handle('report-block-reason', async (e, { id, reason, duration }) => {
             if (!this.services.taskCenter) return;
