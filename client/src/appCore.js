@@ -33,8 +33,8 @@ class AppCore {
             const SetupWindow = this.hotReloader.loadModuleSafely('setupWindow', './src/setupWindow').SetupWindow;
             const ReminderService = this.hotReloader.loadModuleSafely('reminderService', './src/reminderService').ReminderService;
 
-            // [v5.0] 全新模組，為避免基礎映射錯誤，改用原生引入直到下次完整封裝
-            const { TaskCenterService } = require('./taskCenterService');
+            // [v5.0] 為了確保更新穩定，交辦中心模組暫停原生載入
+            // const { TaskCenterService } = require('./taskCenterService');
 
             const ClassificationWindow = this.hotReloader.loadModuleSafely('classificationWindow', './src/classificationWindow').ClassificationWindow;
             const AdminDashboard = this.hotReloader.loadModuleSafely('adminDashboard', './src/adminDashboard').AdminDashboard;
@@ -57,16 +57,16 @@ class AppCore {
                 this.services.classifierService
             );
 
-            // [v5.0] 初始化交辦中心核心 API
-            this.services.taskCenter = new TaskCenterService(this.services.storageService, this.services.configManager);
+            // [v5.0] 初始化交辦中心核心 API (為安全起見先註解)
+            // this.services.taskCenter = new TaskCenterService(this.services.storageService, this.services.configManager);
 
             this.services.setupWindow = new SetupWindow(this.services.configManager, this.services.checkinService);
             this.services.classificationWindow = new ClassificationWindow(this.services.classifierService);
 
             this.services.reminderService = new ReminderService(
                 this.services.configManager,
-                this.services.monitorService,
-                this.services.taskCenter // 注入 TaskCenter
+                this.services.monitorService
+                // this.services.taskCenter (已暫不注入以確保熱更新穩定)
             );
             this.services.reminderService.start();
 
