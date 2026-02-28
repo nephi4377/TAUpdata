@@ -1,4 +1,4 @@
-778// v1.1 - 2026-02-23 15:45 (Asia/Taipei)
+// v1.1 - 2026-02-23 15:45 (Asia/Taipei)
 // 修改內容: 完善 AppCore，遷移所有業務邏輯、IPC 處理程序與定時排程。
 // 使 main.js 成為純粹的啟動殼 (Launcher Shell)。
 
@@ -12,9 +12,8 @@ class AppCore {
         this.hotReloader = hotReloader;
         this.patchUpdater = patchUpdater;
 
+        // 實作高品質 API 封裝概念
         this.services = {};
-        this.timers = {};
-        this.isManualCheck = false;
     }
 
     /**
@@ -33,6 +32,10 @@ class AppCore {
             const CheckinService = this.hotReloader.loadModuleSafely('checkinService', './src/checkinService').CheckinService;
             const SetupWindow = this.hotReloader.loadModuleSafely('setupWindow', './src/setupWindow').SetupWindow;
             const ReminderService = this.hotReloader.loadModuleSafely('reminderService', './src/reminderService').ReminderService;
+
+            // [v5.0] 全新模組，為避免基礎映射錯誤，改用原生引入直到下次完整封裝
+            const { TaskCenterService } = require('./taskCenterService');
+
             const ClassificationWindow = this.hotReloader.loadModuleSafely('classificationWindow', './src/classificationWindow').ClassificationWindow;
             const AdminDashboard = this.hotReloader.loadModuleSafely('adminDashboard', './src/adminDashboard').AdminDashboard;
             const { versionService } = this.hotReloader.loadModuleSafely('versionService', './src/versionService');
@@ -54,10 +57,17 @@ class AppCore {
                 this.services.classifierService
             );
 
+            // [v5.0] 初始化交辦中心核心 API
+            this.services.taskCenter = new TaskCenterService(this.services.storageService, this.services.configManager);
+
             this.services.setupWindow = new SetupWindow(this.services.configManager, this.services.checkinService);
             this.services.classificationWindow = new ClassificationWindow(this.services.classifierService);
 
-            this.services.reminderService = new ReminderService(this.services.configManager, this.services.monitorService);
+            this.services.reminderService = new ReminderService(
+                this.services.configManager,
+                this.services.monitorService,
+                this.services.taskCenter // 注入 TaskCenter
+            );
             this.services.reminderService.start();
 
             this.services.adminDashboard = new AdminDashboard(this.services.configManager);
@@ -97,7 +107,7 @@ class AppCore {
             return true;
         } catch (err) {
             console.error('[Core] 初始化失敗:', err);
-            dialog.showErrorBox('核心錯誤', `添心生產力助手核心模組載入失敗：\n${err.message}`);
+            dialog.showErrorBox('核心錯誤', `添心生產力助手核心模組載入失敗：\n${err.message} `);
             return false;
         }
     }
@@ -117,9 +127,9 @@ class AppCore {
                 path: app.getPath('exe'),
                 args: ['--hidden'] // 靜默啟動
             });
-            log.info(`[Core] 開機啟動設定已更新: ${autoStart}`);
+            log.info(`[Core] 開機啟動設定已更新: ${autoStart} `);
         } catch (e) {
-            log.error(`[Core] 無法設定開機啟動: ${e.message}`);
+            log.error(`[Core] 無法設定開機啟動: ${e.message} `);
         }
     }
 
@@ -203,7 +213,7 @@ class AppCore {
 
             // [跨天重置邏輯] v1.8.9b: 僅在日期更換且時間已過早上 7 點時重置
             if (wi && wi.date && wi.date !== todayStr && now.getHours() >= 7) {
-                console.log(`[Core] 檢測到新工作日 (${todayStr})，執行打卡記錄重置...`);
+                console.log(`[Core] 檢測到新工作日(${todayStr})，執行打卡記錄重置...`);
                 configManager.setTodayWorkInfo(null);
                 return;
             }
@@ -268,20 +278,41 @@ class AppCore {
             return await shell.openExternal('https://liff.line.me/2007974938-jVxn6y37?source=hub');
         });
         ipcMain.handle('open-dashboard-window', async () => {
-            log.info('[Core] 正在開啟整合主控台 (Info Console)...');
-            return await shell.openExternal('https://info.tanxin.space/index.html');
+            const url = 'https://info.tanxin.space/index.html';
+            console.log(`[Core] 開啟整合主控台: ${url} `);
+            try {
+                await shell.openExternal(url);
+                return { success: true };
+            } catch (err) {
+                console.error('[Core] 開啟外部網頁失敗:', err);
+                return { success: false, error: err.message };
+            }
         });
 
         // 個人待辦事項 IPC
         ipcMain.handle('get-local-tasks', () => storageService?.getLocalTasks());
-        ipcMain.handle('add-local-task', async (e, { title, dueDate, dueTime, leadMinutes, repeatType }) => {
-            const res = await storageService?.addLocalTask(title, dueDate, dueTime, leadMinutes, repeatType);
+        ipcMain.handle('add-local-task', async (e, { title, dueDate, dueTime, leadMinutes, repeatType, deadlineMinutes, priorityMode }) => {
+            const res = await storageService?.addLocalTask(title, dueDate, dueTime, leadMinutes, repeatType, deadlineMinutes, priorityMode);
             if (reminderService) {
                 reminderService.triggerLocalCheck();
             }
             return res;
         });
         ipcMain.handle('update-local-task', (e, { id, status, title }) => storageService?.updateLocalTask(id, status, title));
+
+        ipcMain.handle('update-local-task', (e, { id, status, title }) => storageService?.updateLocalTask(id, status, title));
+
+        // [v5.0] 專業交辦回饋 API 封裝實作
+        ipcMain.handle('report-block-reason', async (e, { id, reason, duration }) => {
+            if (!this.services.taskCenter) return;
+            return await this.services.taskCenter.reportBlocked(id, reason, duration || 0);
+        });
+
+        ipcMain.handle('update-task-response', async (e, { id, note, duration }) => {
+            if (!this.services.taskCenter) return;
+            return await this.services.taskCenter.completeTask(id, note, duration || 0);
+        });
+
         ipcMain.handle('delete-local-task', (e, id) => storageService?.deleteLocalTask(id));
         ipcMain.handle('get-icloud-events', async () => {
             if (!reminderService) return [];
@@ -342,7 +373,7 @@ class AppCore {
             dialog.showMessageBox({
                 type: 'info',
                 title: '發現新版本',
-                message: `發現新版本 v${info.version}，正在背景下載中...\n更新內容：\n${info.releaseNotes || '無版本說明'}`,
+                message: `發現新版本 v${info.version}，正在背景下載中...\n更新內容：\n${info.releaseNotes || '無版本說明'} `,
                 buttons: ['確定']
             });
         });
@@ -409,7 +440,7 @@ class AppCore {
         const y = now.getFullYear();
         const m = String(now.getMonth() + 1).padStart(2, '0');
         const d = String(now.getDate()).padStart(2, '0');
-        return `${y}-${m}-${d}`;
+        return `${y} -${m} -${d} `;
     }
 }
 

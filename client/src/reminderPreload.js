@@ -18,9 +18,11 @@ contextBridge.exposeInMainWorld('reminderAPI', {
     openDashboardWindow: () => ipcRenderer.invoke('open-dashboard-window'),
     // 個人待辦事項
     getLocalTasks: () => ipcRenderer.invoke('get-local-tasks'),
-    addLocalTask: (title, dueDate, dueTime, leadMinutes, repeatType) =>
-        ipcRenderer.invoke('add-local-task', { title, dueDate, dueTime, leadMinutes, repeatType }),
+    addLocalTask: (title, dueDate, dueTime, leadMinutes, repeatType, deadlineMinutes, priorityMode) =>
+        ipcRenderer.invoke('add-local-task', { title, dueDate, dueTime, leadMinutes, repeatType, deadlineMinutes, priorityMode }),
     updateLocalTask: (id, status, title) => ipcRenderer.invoke('update-local-task', { id, status, title }),
+    reportBlockReason: (id, reason, duration) => ipcRenderer.invoke('report-block-reason', { id, reason, duration }),
+    updateTaskResponse: (id, note, duration) => ipcRenderer.invoke('update-task-response', { id, note, duration }),
     deleteLocalTask: (id) => ipcRenderer.invoke('delete-local-task', id),
     // 取得 iCloud 行事曆行程 (用於 UI 顯示)
     getIcloudEvents: () => ipcRenderer.invoke('get-icloud-events'),

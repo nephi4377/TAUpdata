@@ -142,7 +142,14 @@ class StorageService {
             { name: 'reminder_sent', type: 'INTEGER DEFAULT 0' },
             { name: 'reminder_lead_minutes', type: 'INTEGER DEFAULT 0' },
             { name: 'repeat_type', type: 'TEXT DEFAULT "none"' },
-            { name: 'category', type: 'TEXT DEFAULT "personal"' }
+            { name: 'category', type: 'TEXT DEFAULT "personal"' },
+            { name: 'deadline_minutes', type: 'INTEGER DEFAULT 0' },
+            { name: 'priority_mode', type: 'TEXT DEFAULT "normal"' },
+            { name: 'last_reminder_at', type: 'TEXT' },
+            { name: 'block_reason', type: 'TEXT' }, // 困難回報原因 (JSON)
+            { name: 'actual_duration', type: 'INTEGER DEFAULT 0' }, // 實際執行分鐘數
+            { name: 'response_note', type: 'TEXT' }, // 最後完成/回報的心得內容
+            { name: 'is_synced', type: 'INTEGER DEFAULT 0' } // 是否已同步至 GAS
         ];
 
         for (const col of upgradeColumns) {
@@ -831,11 +838,11 @@ class StorageService {
     // ==========================================
 
     // [v1.11.1] 新增本地待辦 (支援日期、時間、提前量與重複)
-    addLocalTask(title, dueDate = null, dueTime = null, leadMinutes = 0, repeatType = 'none') {
+    addLocalTask(title, dueDate = null, due_time = null, leadMinutes = 0, repeatType = 'none', deadlineMinutes = 0, priorityMode = 'normal') {
         this.db.run(`
-            INSERT INTO local_tasks (title, status, due_date, due_time, reminder_lead_minutes, repeat_type, reminder_sent) 
-            VALUES (?, 'pending', ?, ?, ?, ?, 0)
-        `, [title, dueDate, dueTime, leadMinutes, repeatType]);
+            INSERT INTO local_tasks (title, status, due_date, due_time, reminder_lead_minutes, repeat_type, deadline_minutes, priority_mode, reminder_sent) 
+            VALUES (?, 'pending', ?, ?, ?, ?, ?, ?, 0)
+        `, [title, dueDate, due_time, leadMinutes, repeatType, deadlineMinutes, priorityMode]);
         this.scheduleSave();
         return { success: true };
     }

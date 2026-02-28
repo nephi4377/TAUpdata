@@ -31,7 +31,7 @@ class MonitorService {
         // 優先從分類服務的 Config 讀取，若無則使用預設值
         const config = this.classifierService.configManager;
         this.idleThresholdLeisure = (config.get('idleThresholdLeisure') || 10) * 60; // 休閒類：預設 10 分鐘
-        this.idleThresholdOther = (config.get('idleThresholdOther') || 2) * 60;      // 其他類：預設 2 分鐘
+        this.idleThresholdOther = (config.get('idleThresholdOther') || 5) * 60;      // 其他類：預設 5 分鐘 (根據使用者要求調整)
 
         // 午休時間設定
         this.lunchBreakStart = 12;

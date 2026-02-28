@@ -50,10 +50,10 @@ function decrypt(text) {
 // [v2.2.7 Restore ID v231] SOP Fix: Updated existing deployment to fix 404
 const CHECKIN_API_URL = 'https://script.google.com/macros/s/AKfycbz5-DUPNNciVdvE5wrOogNgxYt8EpDZppAe9f2cUh8pW9y3i29fB6n0RA5r-A5KuAiz/exec';
 
-// [v1.10.2] 分店經緯度定義 (用於背景打卡備援)
+// [v1.11.24] 分店經緯度定義 (使用者提供精確座標)
 const STORE_LOCATIONS = {
-    '台南店': { lat: 22.9926, lon: 120.2198 }, // 範例值，根據實際案場修正
-    '高雄店': { lat: 22.6273, lon: 120.3014 }  // 範例值，根據實際案場修正
+    '台南店': { lat: 22.983908, lon: 120.1860286 },
+    '高雄店': { lat: 22.6383363, lon: 120.3271388 }
 };
 
 const path = require('path');

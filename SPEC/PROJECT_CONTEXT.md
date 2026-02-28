@@ -1,53 +1,116 @@
 # 專案技術上下文 (Project Technical Context)
-版本：v1.6.3 (2026-02-22)
+版本：v1.11.24 (2026-02-26)
 
-## 🎯 核心機制定義
+> [!IMPORTANT]
+> **本文件定義之規範優先級最高。標註為「不可變動」之核心機制涉及系統穩定性與安全性，未經徹底測試嚴禁修改原有邏輯。**
 
-### 1. 靜默熱更新 (Silent Hot-Update)
-- **原理**: 為了不干擾員工工作，更新過程必須是無感的。
-- **實作**: 
-  - `main.js` 中的 `autoUpdater` 會在背景自動檢查與下載。
-  - 當點擊「檢查更新」手動觸發時，僅在「檢查中」與「下載中」給予提示。
-  - **重要**: `update-downloaded` 事件被觸發時，禁止調用 `dialog` 彈窗提示重啟。
-  - **更新套用**: 更新會暫存在本地，直到應用程式下次正常重啟時自動完成覆蓋。
+## 🏗️ 系統架構與模組地圖 (Architecture)
 
-### 2. CI/CD 自動發布流程
-- **平台**: GitHub Actions (`.github/workflows/build.yml`)。
-- **觸發**: 僅在推送版本標籤 (Tag: `v*`) 時執行編譯。
-- **發布屬性**: 在 `package.json` 中配置 `"releaseType": "release"`。
-- **自動化目標**: CI 跑完後必須自動建立正式 Release，不得處於 Draft 狀態，否則客戶端無法自動偵測。
+本系統採 **Micro-Service at Edge** 架構，由 `AppCore` 集中調度，確保各服務解耦。
 
-### 3. 數據記憶與恢復
-- **Storage**: 使用 SQLite 本地存檔。
-- **恢復**: 啟動時必須由 `MonitorService` 調用 `_restoreTodayStats` 從 DB 載入今日累計時數，並新增 `before-quit` 事件攔截，確保程式關閉前完成最後一次 `storage.saveToFile()`。
-- **頻率**: 自動存檔間隔已從 60 秒縮短至 **15 秒**，以降低突發崩潰導致的損失。
-
-## 🛡️ 安全與行為準則
-
-### 1. 隱私保護 (Privacy Standard)
-- **原則**: 本系統定位為「生產力協助工具」而非「監控軟體」。
-- **技術禁令**: 嚴禁引入任何螢幕截圖 (Screenshot)、按鍵記錄 (Keylogger) 或網頁具體內文讀取的代碼。
-
-### 2. 管理員權限判定 (ACL)
-- **判定位置**: `TrayManager` 與自定義視窗。
-- **門檻**: 同時支援「權限等級 5」、「BOSS 組別」或特定使用者名稱（管理者）。
-- **機制**: 當權限不足時，管理、歷史、分類等選單應完全隱藏。若本地權限為 0 則應透過 `get_employee_by_pc` 向後端補齊。
-
-### 3. 資源效率與更新
-- **去心跳化**: 由於 GAS 限制，嚴禁使用高頻率心跳。報表採「視窗開啟即同步」機制。
-- **熱更新**: 採「靜默下載」模式，下載完成後禁止彈窗，於下次啟動自動更換。
-
-### 4. 提醒事項狀態持久化
-- **目標**: 確保「已完成」或「已稍後」的提醒在重啟小助手後不會重複跳出。
-- **實作**: 狀態儲存在 `configManager` 中。啟動時由 `ReminderService._loadTodayStatus()` 恢復。
-
-### 5. 開發與測試環境
-- **環境差異**: 在 `npm start` (開發模式) 下，`autoUpdater.checkForUpdates()` 會拋出錯誤或提示不支援，這是預期行為。
-- **版本顯示**: 版本號必須呈現在「詳細統計」視窗與托盤選單的懸停文字中，以便快速辨識目前的運作環境。
-
-## 🗄️ 後端關聯 (Backend Dependencies)
-- **Constants.js**: 打卡與通知系統的核心表單名稱與快取 TTL 必須統一定義在此檔案，嚴禁 hard-code 字串在邏輯函式中。
-- **CoreLibrary**: 本專案深度依賴 `CoreLib` 進行 AI 生成、日誌記錄與 API 調用。
+### 核心服務與職責 (Services)
+- **`appCore.js` (核心大腦)**: 
+  - 負責模組載入、IPC 註冊、定時任務。
+  - **!!! 不可變動 !!!**: `restartServices` 必須採 **強制全程序重啟 (Relaunch)** 模式，嚴禁使用軟重載以防 IPC 殘留。
+- **`tray.js` (UI 門面)**: 負責圓形圖示繪製、報表生成、小秘書影像快取載入。
+- **`monitor.js` (行為引擎)**: 前景視窗取樣（15秒）。Toast 提醒採用暫存 HTML 以防渲染衝突。
+- **`config.js` (設定管理)**: 
+  - **!!! 不可變動 !!!**: `isAdmin` 方法之判定條件（黃俊豪/BOSS/PermissionLevel >= 5）為系統權限核心，嚴禁刪除或降級。
+- **`storage.js` (持久化層)**: SQLite 驅動，今日數據每 15 秒保存一次。
+- **`checkinService.js` (後端對口)**: 處理 GAS 打卡 API 與通訊。
 
 ---
-*本文件定義之規範優先級高於一般開發習慣，修改核心機制前請務必確認需求。*
+
+## 🎯 核心機制與功能定義
+
+### 1. 靜默熱更新與自動對齊 (Modern Hot-Update)
+- **原理**: 為了不干擾工作，更新過程必須是背景無感的。
+- **實作**: 補丁 (`patch`) 背景下載完成後，觸發 `appCore.restartServices()`。
+- **!!! 不可變動規範 !!!**: 
+  - 為防止「Attempted to register a second handler」及內存溢出，**熱更新後必須執行 `app.relaunch()` 進行完整重啟**。
+  - `setupIpcHandlers` 在註冊前必須對所有 `channels` 執行 `try { ipcMain.removeHandler(ch); }`。
+
+### 2. 影像本地快取 (Mascot Local Caching)
+- **原理**: 解決 GitHub 延遲，實現秒開。
+- **實作**: 影像首開下載至 `userData/mascot_cache`，後續由 `file://` 載入。支援 Default, Blizzard, Thunder, Boulder, Sacred, Prism 六種裝束隨機切換。
+
+### 3. 行事曆與提醒整合 (Calendar & Interaction)
+- **機制**: 定時同步 iCloud 行事曆與本地待辦。
+- **顯示**: 統計報表中行事曆行程 (📅) 必須置頂顯示。
+
+---
+
+## 🔄 系統更新機制 (Update Mechanism)
+
+### 1. 更新頻率與觸發
+- **背景巡檢**: 系統每 **15 分鐘** 會自動在背景檢查一次是否有新補丁 (Patch) 或新版本。
+- **手動檢查**: 使用者可透過右鍵點擊工具列圖示，選擇 **「� 檢查更新」** 立即觸發檢查。
+
+### 2. 更新執行流程
+- **檢測與下載**: 系統偵測到版本差異後，會動態下載增量補丁。
+- **強制生效**: 下載完成後，為了確保 100% 穩定，系統會執行「全程序自動重啟 (Relaunch)」。
+- **版本驗證**: 重啟後，使用者可在「詳細統計報表」標題下方看到最新的版本號（如 `v1.11.24`）。
+
+---
+
+## �🚀 核心 UI 連結與操作流程 (UI & Workflow)
+
+### 1. 詳細統計報表 (Stats Window)
+報表視窗 (Stats Window) 是使用者與系統互動的核心區域。
+
+#### **A. 打卡發送系統 (Check-in System)**
+*   **按鈕位置**: 使用者資訊卡片下方。
+*   **連結路徑**: `onclick="doCheckin()"` → 調用 `window.reminderAPI.directCheckin()`。
+*   **後端對接**: 透過 `CheckinService` 發送 `action: 'direct_checkin'` 至 GAS 後端。
+- **流程**: 點擊按鈕 → 鎖定按鈕防止連點 → 調用 IPC → 接收後端完成訊息 → 自動刷新統計數據。
+  1. 點擊「✅ 打卡發送」按鈕。
+  2. 視窗調用 `doCheckin()` 腳本。
+  3. 透過橋接器發送 `direct-checkin` 請求至 `AppCore`。
+  4. `CheckinService` 向 GAS 後端發送 `action: 'direct_checkin'`。
+  5. 成功後，前端自動觸發 `refreshStats` 更新今日打卡時間顯示。
+
+#### **B. 整合主控台 (Admin / Info Console)**
+*   **按鈕位置**: 使用者資訊卡片右下方。
+*   **連結路徑**: `onclick="window.reminderAPI.openDashboardWindow()"`。
+*   **目標網址**: `https://info.tanxin.space/index.html`。
+*   **行為**: 系統將透過預設瀏覽器開啟整合儀表板，提供更全面的數據視圖。
+
+#### **C. 帳號綁定連結 (Account Binding)**
+*   **觸發條件**: 當 `ConfigManager` 偵測到尚未綁定員工時自動顯示。
+*   **按鈕位置**: 報表置頂卡片（取代使用者資訊）。
+*   **連結路徑**: `onclick="window.reminderAPI.openLinkWindow()"`。
+- **功能**: 當系統偵測到未綁定員工時，導引使用者進行身份對齊。
+- **流程**:   
+  1. 報表頂部顯示「⚠️ 未連結打卡帳號」警告卡片。
+  2. 點擊「📲 前往綁定 (LINE)」按鈕。
+  3. 系統開啟 [LINE LIFF 綁定頁面](https://liff.line.me/2007974938-jVxn6y37?source=hub)。
+  4. 使用者在頁面確認員工身份。
+  5. 綁定完成後，小助手將在下一次定時刷新（10分鐘）或手動「檢查更新」後自動對齊。
+---
+
+## 🛡️ 安全、隱私與權限 (Security & Privacy)
+
+### 1. 管理員權限系統 (ACL)
+- **!!! 不可變動判定基準 !!!**:
+  - `PermissionLevel >= 5`：管理員等級。
+  - `Group === 'BOSS'`：老闆組別。
+  - `userName === '黃俊豪'`：系統擁有者。
+- **行為**: 權限不足時，管理、歷史、分類等選單應完全隱藏，不得僅透過 UI 遮蓋。
+
+### 2. 小秘書專業人格 (Professional Persona)
+- **規範**: 定位為「職場秘書/PM」。嚴禁使用「主人」稱呼，台詞應隨機、專業且具備職場關懷。
+
+### 3. 隱私紅線
+- **原則**: 生產力輔助而非監控。
+- **禁令**: 嚴禁截圖、按鍵記錄、內容側錄。僅記錄 App 名稱與視窗標題。
+
+---
+
+## 🚀 開發與部署工作流 (Workflow)
+
+1. **版本號對齊**: `package.json` 更新後，手動更新此文件版本。
+2. **自動化發布**: 推送 `v*` 標籤觸發 GitHub Actions。下載補丁後系統應自動重啟對齊。
+3. **不可變動註記**: 任何涉及上述核心機制的修改，必須在 `指令記錄.md` 與 `部署記錄.md` 中詳細說明測試過程。
+
+---
+*本文件為系統最高指導原則，所有開發代理 (Agents) 必須嚴格遵守。*

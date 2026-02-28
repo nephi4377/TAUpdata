@@ -16,19 +16,18 @@ class CheckinService {
     // ═══════════════════════════════════════════════════════════════
 
     // GET 請求
-    async _get(params) {
+    async _get(params, skipPage = false) {
         // [v2026.1 Fix] Remove undefined/null params to avoid "undefined" string in URL
         const cleanParams = {};
+        if (!skipPage) cleanParams.page = 'attendance_api';
+
         for (const key in params) {
             if (params[key] !== undefined && params[key] !== null) {
                 cleanParams[key] = params[key];
             }
         }
 
-        const queryString = new URLSearchParams({
-            page: 'attendance_api',
-            ...cleanParams
-        }).toString();
+        const queryString = new URLSearchParams(cleanParams).toString();
 
         const url = `${this.apiUrl}?${queryString}`;
         console.log(`[CheckinService] GET → ${params.action}`);
@@ -157,32 +156,38 @@ class CheckinService {
             console.warn('[CheckinService] IP 定位超時或失敗，嘗試備援方案...');
         }
 
-        // [v1.10.2] 備援方案：如果 IP 定位失敗，根據員工所屬群組 (台南/高雄) 套用預設座標
+        // [v1.11.24] 備援方案：根據員工所屬群組或公司名稱自動套用預設據點座標
         if (lat === 0 && lon === 0) {
             const boundEmployee = this.config.getBoundEmployee();
-            if (boundEmployee && boundEmployee.group) {
+            if (boundEmployee) {
+                const group = boundEmployee.group || '';
                 const stores = this.config.getStoreLocations();
-                const matchedStore = Object.keys(stores).find(name => boundEmployee.group.includes(name));
+
+                // 模糊匹配店名
+                const matchedStore = Object.keys(stores).find(name => group.includes(name.replace('店', '')));
+
                 if (matchedStore) {
                     lat = stores[matchedStore].lat;
                     lon = stores[matchedStore].lon;
-                    locationMethod = 'store_fallback';
-                    console.log(`[CheckinService] 使用分店備援座標: ${matchedStore} (${lat}, ${lon})`);
+                    locationMethod = 'office_fixed';
+                    console.log(`[CheckinService] 已自動對應據點座標: ${matchedStore} (${lat}, ${lon})`);
                 }
             }
         }
 
-        // 發送給舊版的打卡端點
-        return await this._get({
+        // [v1.11.24] 同步 checkin.html 規格發送
+        const params = {
             action: 'checkin',
             userId: userId,
             userName: userName,
             lat: lat,
             lon: lon,
-            source: 'desktop_app_' + this.pcName,
-            locationMethod: locationMethod, // 註記定位方式
+            source: 'assistant', // 小助手專用標記
+            locationMethod: locationMethod,
             timestamp: new Date().getTime()
-        });
+        };
+
+        return await this._get(params, true); // 傳入 skipPage=true
     }
 
     // ═══════════════════════════════════════════════════════════════

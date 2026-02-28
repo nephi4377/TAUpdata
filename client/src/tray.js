@@ -22,7 +22,7 @@ class TrayManager {
     this.tray = null;
     this.statsWindow = null;
     this._registerIpcHandlers();
-    console.log('[Tray] 系統功能已全面還原 (v1.11.24)');
+    console.log(`[Tray] 系統功能已全面還原 (v${versionService.getEffectiveVersion()})`);
   }
 
   destroy() {
@@ -112,10 +112,26 @@ class TrayManager {
     ];
 
     if (bound) {
-      template.push({ label: `👤 ${bound.userName}`, enabled: false }, { type: 'separator' });
+      template.push({ label: `👤 ${bound.userName}`, enabled: false });
+      // [還原] 快速打卡功能
+      template.push({
+        label: '✅ 快速打卡 (發送至 LINE)',
+        click: async () => {
+          if (!this.checkinService) return;
+          const res = await this.checkinService.directCheckin(bound.userId, bound.userName);
+          if (res && res.success) {
+            new Notification({ title: '打卡成功', body: '已成功發送打卡訊號至 LINE 平台。' }).show();
+            // 延遲刷新統計，讓後端有時間更新資料
+            setTimeout(() => this.showStatsWindow(false), 2000);
+          } else {
+            new Notification({ title: '打卡失敗', body: res ? res.message : '通訊錯誤' }).show();
+          }
+        }
+      });
+      template.push({ type: 'separator' });
     }
 
-    // 恢復整合主控台連結
+    // [還原] 整合主控台連結
     template.push({ label: '🖥️ 開啟整合主控台', click: () => { shell.openExternal('https://info.tanxin.space/index.html'); } });
 
     // 管理員與設定
@@ -149,19 +165,33 @@ class TrayManager {
       fname = 'secretary_male.png';
     }
 
-    // 執行快取檢查 (若無網路且無快取則會回傳空)
-    const localPath = await this.ensureMascotCached(fname);
+    // [v1.11.18 Optimization] 並行獲取數據，且限制圖片快取等待時間
+    const dataPromises = [
+      this.storageService.getTodayStats(),
+      this.storageService.getHourlyStats(),
+      this.storageService.getRecentTopApps(1),
+      this.storageService.getLocalTasks()
+    ];
+
+    // 圖片快取限制在 500ms 內完成，否則先用遠端 URL
+    const mascotPromise = Promise.race([
+      this.ensureMascotCached(fname),
+      new Promise(resolve => setTimeout(() => resolve(null), 500))
+    ]);
+
+    const [stats, hourlyStats, topApps, localTasks, localPath] = await Promise.all([...dataPromises, mascotPromise]);
     const mascotPath = localPath ? `file://${localPath.replace(/\\/g, '/')}` : '';
 
     return {
-      stats: await this.storageService.getTodayStats(),
-      hourlyStats: await this.storageService.getHourlyStats(),
-      topApps: await this.storageService.getRecentTopApps(1),
+      stats,
+      hourlyStats,
+      topApps,
       status: this.monitorService.getStatus(),
       boundEmployee: this.configManager.getBoundEmployee(),
       workInfo: this.configManager.getTodayWorkInfo(),
-      localTasks: await this.storageService.getLocalTasks(),
-      icloudEvents: this.reminderService ? this.reminderService.reminders.filter(r => r.isIcloud) : [],
+      localTasks,
+      todayReminders: this.reminderService ? this.reminderService.getTodayReminderStatus() : [],
+      hasIcloudUrl: !!this.configManager.get('icloudCalendarUrl'), // 新增連結判定
       version: versionService.getEffectiveVersion(),
       mascotUrl: mascotPath || `https://raw.githubusercontent.com/nephi4377/TAUpdata/master/client/assets/${fname}`
     };
@@ -169,25 +199,71 @@ class TrayManager {
 
   async showStatsWindow(isManual = true) {
     const data = await this.getStatsData();
+
+    // 如果視窗已存在
     if (this.statsWindow && !this.statsWindow.isDestroyed()) {
       this.statsWindow.webContents.send('update-stats-data', data);
       if (isManual) this.statsWindow.focus();
       return;
     }
+
+    // 建立新視窗
     const html = await this.generateStatsHtml(data);
     const temp = path.join(this.app.getPath('userData'), 'stats_stable_v17.html');
     fs.writeFileSync(temp, html, 'utf8');
+
     this.statsWindow = new BrowserWindow({
       width: 720, height: 880, title: '添心生產力助手 - 詳細統計',
       autoHideMenuBar: true,
-      show: false, // 改為先隱藏，載入完再顯
+      show: false,
       webPreferences: { contextIsolation: true, preload: path.join(__dirname, 'reminderPreload.js') }
     });
+
     this.statsWindow.loadFile(temp);
+
     this.statsWindow.once('ready-to-show', () => {
       this.statsWindow.show();
       this.statsWindow.webContents.send('update-stats-data', data);
+      this._startAutoRefresh(); // 啟動自動刷新
     });
+
+    // [新增] 置頂/獲得焦點時自動更新
+    this.statsWindow.on('focus', async () => {
+      console.log('[Tray] 統計視窗獲得焦點，執行即時更新...');
+      const latestData = await this.getStatsData();
+      if (this.statsWindow && !this.statsWindow.isDestroyed()) {
+        this.statsWindow.webContents.send('update-stats-data', latestData);
+      }
+    });
+
+    // 視窗關閉時清理
+    this.statsWindow.on('closed', () => {
+      this._stopAutoRefresh();
+      this.statsWindow = null;
+    });
+  }
+
+  /**
+   * 啟動 5 分鐘自動刷新計時器
+   */
+  _startAutoRefresh() {
+    this._stopAutoRefresh(); // 確保不會重複建立
+    this.refreshTimer = setInterval(async () => {
+      if (this.statsWindow && !this.statsWindow.isDestroyed()) {
+        console.log('[Tray] 執行 5 分鐘定時統計更新...');
+        const data = await this.getStatsData();
+        this.statsWindow.webContents.send('update-stats-data', data);
+      } else {
+        this._stopAutoRefresh();
+      }
+    }, 5 * 60 * 1000); // 5 分鐘
+  }
+
+  _stopAutoRefresh() {
+    if (this.refreshTimer) {
+      clearInterval(this.refreshTimer);
+      this.refreshTimer = null;
+    }
   }
 
   async generateStatsHtml(data) {
@@ -239,6 +315,49 @@ class TrayManager {
           </div>
           <div id="user-card-area"></div>
         </div>
+
+        <div class="card" id="task-center-card" style="display:none;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+            <h2>📋 提醒與待辦行程</h2>
+            <div style="display:flex; gap:5px;">
+               <button class="btn info" style="padding:4px 8px; font-size:11px;" onclick="showAddTask('emergency')">🚨 緊急</button>
+               <button class="btn ok" style="padding:4px 8px; font-size:11px;" onclick="showAddTask('normal')">➕ 一般</button>
+            </div>
+          </div>
+          <div id="t-l" style="min-height:100px;">正在下載最新行程...</div>
+        </div>
+
+        <script>
+        async function showAddTask(mode = 'normal') {
+          const title = prompt(mode === 'emergency' ? '🚨 請輸入緊急交辦內容：' : '➕ 請輸入交辦任務名稱：');
+          if (!title) return;
+          
+          let deadline = 0;
+          if (mode === 'normal') {
+            const hasDead = confirm('需要設定「限時衝刺 (Sprint)」倒數嗎？');
+            if (hasDead) {
+              const mins = prompt('請輸入限時分鐘數 (例如: 30)：', '30');
+              deadline = parseInt(mins) || 0;
+            }
+          }
+
+          try {
+            await window.reminderAPI.addLocalTask(
+               title, 
+               new Date().toISOString().split('T')[0], 
+               null, // dueTime
+               0,    // leadMinutes
+               'none', // repeat
+               deadline,
+               mode
+            );
+            alert('✅ 交辦成功！小秘書會幫您盯著進度的。');
+            window.reminderAPI.refreshStats();
+          } catch(e) {
+            alert('交辦失敗：' + e.message);
+          }
+        }
+        </script>
 
         <div class="card">
           <h2>⏱️ 今日時間概覽</h2>
@@ -312,9 +431,26 @@ class TrayManager {
            }
         }
 
-        // [不可變動] 待辦切換邏輯
+        // [v4.0 專業交辦回饋]
+        async function handleReportBlock(id) {
+          const reason = prompt('🛠️ 請描述目前遇到的困難 (例如: 缺料、案場施工受阻)：');
+          if (!reason) return;
+          await window.reminderAPI.reportBlockReason(id, reason, 0);
+          window.reminderAPI.refreshStats();
+        }
+
+        async function handleCompleteWithNote(id) {
+          const note = prompt('✅ 請輸入完成心得或執行摘要 (選填)：', '順利完成');
+          if (note === null) return;
+          await window.reminderAPI.updateTaskResponse(id, note, 0);
+          window.reminderAPI.refreshStats();
+        }
+
         async function toggle(id, s){
           if(!window.reminderAPI) return;
+          if (s === 'Completed') {
+            return handleCompleteWithNote(id);
+          }
           await window.reminderAPI.updateLocalTask({id, status: s});
           window.reminderAPI.refreshStats();
         }
@@ -366,40 +502,84 @@ class TrayManager {
           ];
 
           const tasks = d.localTasks || [];
-          const icloud = d.icloudEvents || [];
-          const pendingCount = tasks.filter(t => t.status !== 'completed').length;
+          const reminders = d.todayReminders || [];
+          const pendingCount = tasks.filter(t => t.status !== 'completed').length + reminders.filter(r => r.status !== 'completed').length;
           
           let m = quotes[Math.floor(Math.random() * quotes.length)];
-          if (icloud.length > 0) m = "偵測到您的行事曆有即將到來的行程，別忘了空出時間喔！📅";
-          else if (pendingCount > 0) m = "今天還有 " + pendingCount + " 項重要待辦行程，我會陪您一起達成！💪";
-          else if (r >= 85) m = "您的專注力驚人！看來今天的進度會超標完成呢！🎖️";
+          const icloudEvents = reminders.filter(r => r.id && r.id.startsWith('icloud_') && r.status !== 'completed');
+          const hasIcloud = reminders.some(r => r.id && r.id.startsWith('icloud_'));
+          
+          if (icloudEvents.length > 0) {
+            m = "提醒您，等一下有個「" + icloudEvents[0].title + "」行程，我會幫您留意時間的！📅";
+          } else if (pendingCount > 0) {
+            m = "今天還有 " + pendingCount + " 項重要待辦行程，我會陪您一起達成！💪";
+          } else if (r >= 85) {
+            m = "您的專注力驚人！看來今天的進度會超標完成呢！🎖️";
+          }
           
           document.getElementById('msg').innerText = m;
 
           // 更新提醒清單
           let th = '';
-          icloud.forEach(e => {
-            th += \`<div style="display:flex; justify-content:space-between; padding:12px; border-bottom:1px solid rgba(78,205,196,0.3); background:rgba(78,205,196,0.1); border-radius:8px; margin-bottom:5px;">
-                      <span style="color:#4ecdc4; font-weight:bold;">📅 [行事曆] \${e.title}</span>
-                      <span style="font-size:12px; color:#4ecdc4;">\${e.time || ''}</span>
-                    </div>\`;
-          });
-          
-          tasks.forEach(t => { 
-            const isC = t.status === 'completed';
-            th += \`<div class="task-item" style="\${isC ? 'opacity:0.4;' : ''}">
-                      <span>\${isC ? '✅' : '📌'} \${t.title}</span>
-                      \${!isC ? \`<button class="task-btn" onclick="toggle(\${t.id}, 'completed')">✓</button>\` : ''}
-                    </div>\`;
-          });
-          document.getElementById('t-l').innerHTML = th || '<div style="text-align:center; color:#666; padding:20px;">今日尚無待辦事項</div>';
+          const icloudStatusHtml = hasIcloud 
+            ? '<span style="color:#22c55e; font-size:10px; font-weight:bold;">🟢 行事曆已同步</span>'
+            : (d.hasIcloudUrl 
+               ? '<span style="color:#f59e0b; font-size:10px; font-weight:bold;">🟡 正從 iCloud 同步...</span>'
+               : '<span style="color:#ef4444; font-size:10px; font-weight:bold;">🔴 行事曆未連結 (請至手機 LIFF 設定)</span>');
+            
+          th += '<div style="padding: 5px 10px; border-bottom: 1px solid rgba(255,255,255,0.05); margin-bottom: 10px;">' + icloudStatusHtml + '</div>';
+
+          if (reminders.length === 0 && tasks.length === 0) {
+            th = '<div style="text-align:center; color:#666; padding:20px;">今日尚無待辦事項</div>';
+          } else {
+            reminders.forEach(r => {
+                const isC = r.status === 'completed';
+                const isI = r.id && r.id.startsWith('icloud_');
+                th += '<div style="display:flex; justify-content:space-between; align-items:center; padding:10px; border-bottom:1px solid rgba(255,255,255,0.05); ' + (isC ? 'opacity:0.4;' : '') + '">' +
+                    '<span style="' + (isI ? 'color:#4ecdc4; font-weight:bold;' : '') + '">' +
+                        (isC ? '✅' : (isI ? '📅' : '⏰')) + ' ' + r.title +
+                    '</span>' +
+                    (!isC ? '<button class="task-btn" onclick="window.reminderAPI.complete(\'' + r.id + '\')">✓</button>' : '') +
+                    '</div>';
+            });
+            
+            tasks.forEach(t => { 
+                const isC = t.status === 'Completed' || t.status === 'completed';
+                const isB = t.status === 'Blocked';
+                const pColor = t.priority_mode === 'emergency' ? '#ff6b6b' : (t.priority_mode === 'sprint' ? '#4ecdc4' : '#fff');
+                
+                th += '<div class="task-item" style="flex-direction:column; align-items:flex-start; ' + (isC ? 'opacity:0.4;' : '') + '">' +
+                    '<div style="display:flex; justify-content:space-between; width:100%; align-items:center;">' +
+                        '<span style="' + (t.priority_mode !== 'normal' ? 'font-weight:bold; color:'+pColor+';' : '') + '">' + 
+                            (isC ? '✅' : (isB ? '🛠️' : (t.priority_mode === 'emergency' ? '🚨' : '📌'))) + ' ' + t.title + 
+                        '</span>' +
+                        '<div>' +
+                            (!isC ? '<button class="task-btn" style="color:#f59e0b; margin-right:5px;" onclick="handleReportBlock(' + t.id + ')" title="回報困難">⚠️</button>' : '') +
+                            '<button class="task-btn" onclick="toggle(' + t.id + ', \''+(isC ? 'pending' : 'Completed')+'\')">' + (isC ? '↺' : '✓') + '</button>' +
+                        '</div>' +
+                    '</div>';
+                
+                if (isB && t.block_reason) {
+                    th += '<div style="font-size:10px; color:#f59e0b; margin-top:3px; padding-left:22px;">受阻：' + t.block_reason + '</div>';
+                }
+                if (isC && t.response_note) {
+                    th += '<div style="font-size:10px; color:#999; margin-top:3px; padding-left:22px; font-style:italic;">' + t.response_note + '</div>';
+                }
+                
+                th += '</div>';
+            });
+          }
+          document.getElementById('t-l').innerHTML = th;
         }
 
         // 過場初始化
         window.onload = function() {
-          if (window.reminderAPI && window.reminderAPI.refreshStats) {
-            window.reminderAPI.refreshStats();
-          }
+          // 增加 100ms 緩衝，確保 IPC 監聽器已由 Preload 腳本掛載完成
+          setTimeout(() => {
+            if (window.reminderAPI && window.reminderAPI.refreshStats) {
+              window.reminderAPI.refreshStats({ isManual: false });
+            }
+          }, 100);
         };
       </script>
     </body></html>`;

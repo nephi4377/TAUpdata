@@ -10,9 +10,10 @@ const axios = require('axios');
 const ical = require('node-ical');
 
 class ReminderService {
-    constructor(configManager, monitorService) {
+    constructor(configManager, monitorService, taskCenter) {
         this.config = configManager;
         this.monitorService = monitorService;
+        this.taskCenter = taskCenter;
         this.timers = [];
         this.reminderWindow = null;
 
@@ -123,8 +124,14 @@ class ReminderService {
         // 註冊 IPC 事件（提醒視窗的「完成」和「稍後」按鈕）
         this._registerIpcHandlers();
 
+        // [v4.0 批次同步器] 統一由 TaskCenter API 負責 (開發中，暫時靜默)
+        // setInterval(() => this.taskCenter && this.taskCenter.sync(), 30 * 60 * 1000);
+
         console.log('[Reminder] 智慧提醒服務已建立');
     }
+
+    // [v4.0 已廢棄，功能遷移至 TaskCenterService]
+    // async _syncPendingTasksToGas() { ... }
 
     // 註冊 IPC 處理器
     _registerIpcHandlers() {
@@ -244,12 +251,32 @@ class ReminderService {
 
             const tasks = this.monitorService.storage.getLocalTasks();
             for (const task of tasks) {
-                if (task.status === 'completed' && task.repeat_type === 'none') continue;
+                if (task.status === 'completed') continue;
+
+                // [v1.11.24] 模式 1: 緊急指令 (Emergency/Priority) - 每 20 分鐘強力彈窗一次
+                if (task.priority_mode === 'emergency') {
+                    const lastSent = task.last_reminder_at ? new Date(task.last_reminder_at) : new Date(0);
+                    const diffMin = (now - lastSent) / 60000;
+                    if (diffMin >= 20) {
+                        this.fireReminder({
+                            id: task.id,
+                            icon: '🚨',
+                            title: `【緊急交辦】${task.title}`,
+                            message: `這是最高優先級任務，請務必處理！\n（本提醒將每 20 分鐘出現一次，直到完成）`
+                        }, todayStr);
+                        // 更新最後發送時間 (此處我們暫借用 reminder_sent 邏輯，但為了週期性，需更新資料庫時間)
+                        this.monitorService.storage.db.run(`UPDATE local_tasks SET last_reminder_at = ? WHERE id = ?`, [now.toISOString(), task.id]);
+                    }
+                    continue; // 緊急模式獨立處理，不走一般排程
+                }
+
+                // 模式 2: 一般定時任務 (含限時倒數)
                 if (task.reminder_sent === 1) continue;
                 if (!task.due_date || !task.due_time) continue;
 
                 const isToday = (task.due_date === todayStr);
                 const isDaily = (task.repeat_type === 'daily');
+                // ... (其餘邏輯保持)
                 const isWeekly = (task.repeat_type === 'weekly' && now.getDay() === new Date(task.due_date).getDay());
 
                 if (isToday || isDaily || isWeekly) {
@@ -478,6 +505,146 @@ class ReminderService {
         this.showReminderToast(reminder);
     }
 
+    /**
+     * [v1.12.0 API] 取得秘書頭像 URL
+     */
+    _getMascotUrl() {
+        const mascotGender = this.config.getMascotGender();
+        return mascotGender === 'male'
+            ? 'https://raw.githubusercontent.com/nephi4377/TAUpdata/master/client/assets/secretary_male.png'
+            : 'https://raw.githubusercontent.com/nephi4377/TAUpdata/master/client/assets/secretary.png';
+    }
+
+    /**
+     * [v1.12.0 API] 渲染提醒視窗 HTML 模板 (核心穩定 API)
+     * 之後若無重大 UI 改版，請勿變動此結構。
+     */
+    _renderReminderHtml(reminder, mascotUrl, snoozeLabel, messageHtml) {
+        return `
+    <!DOCTYPE html>
+    <html>
+        <head>
+            <meta charset="UTF-8">
+            <style>
+                body {
+                    margin: 0; padding: 0; overflow: hidden;
+                    font-family: 'Microsoft JhengHei', 'Segoe UI', sans-serif;
+                    background: transparent;
+                    animation: slideIn 0.4s ease-out;
+                }
+                @keyframes slideIn {
+                    from {transform: translateX(-100%); opacity: 0; }
+                    to {transform: translateX(0); opacity: 1; }
+                }
+                .toast {
+                    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+                    border: 1px solid rgba(255,255,255,0.15);
+                    border-left: 4px solid #e94560;
+                    border-radius: 12px;
+                    padding: 16px;
+                    color: #e0e0e0;
+                    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+                    height: calc(100vh - 34px);
+                    display: flex;
+                    flex-direction: column;
+                }
+                .content-area {
+                    display: flex;
+                    gap: 15px;
+                    flex: 1;
+                }
+                .avatar-box {
+                    width: 60px;
+                    height: 90px;
+                    border-radius: 8px;
+                    background: url('${mascotUrl}') center/cover;
+                    border: 1px solid rgba(78, 205, 196, 0.5);
+                    flex-shrink: 0;
+                }
+                .text-box {
+                    flex: 1;
+                    display: flex;
+                    flex-direction: column;
+                }
+                .title {
+                    font-size: 15px;
+                    font-weight: bold;
+                    color: #ffffff;
+                    margin-bottom: 4px;
+                }
+                .message {
+                    font-size: 13px;
+                    line-height: 1.4;
+                    color: #b0b0b0;
+                    overflow-y: auto;
+                }
+                .actions {
+                    display: flex;
+                    gap: 10px;
+                    margin-top: 12px;
+                }
+                .btn {
+                    flex: 1;
+                    padding: 8px 12px;
+                    border: none;
+                    border-radius: 8px;
+                    font-size: 13px;
+                    font-weight: bold;
+                    cursor: pointer;
+                    transition: all 0.2s;
+                    font-family: inherit;
+                }
+                .btn-complete {
+                    background: linear-gradient(135deg, #2ecc71, #27ae60);
+                    color: #fff;
+                }
+                .btn-complete:hover {
+                    background: linear-gradient(135deg, #27ae60, #1e8449);
+                    transform: scale(1.02);
+                }
+                .btn-snooze {
+                    background: rgba(255,255,255,0.1);
+                    color: #999;
+                    border: 1px solid rgba(255,255,255,0.15);
+                }
+                .btn-snooze:hover {
+                    background: rgba(255,255,255,0.15);
+                    color: #ccc;
+                }
+            </style>
+            <script>
+                document.addEventListener('DOMContentLoaded', () => {
+                    document.getElementById('btn-complete').addEventListener('click', () => {
+                        window.reminderAPI.complete('${reminder.id}');
+                    });
+                    document.getElementById('btn-snooze').addEventListener('click', () => {
+                        window.reminderAPI.snooze('${reminder.id}');
+                    });
+                });
+            </script>
+        </head>
+        <body>
+            <div class="toast">
+                <div class="content-area">
+                    <div class="avatar-box"></div>
+                    <div class="text-box">
+                        <div class="title">${reminder.icon} ${reminder.title}</div>
+                        <div class="message">${messageHtml}</div>
+                    </div>
+                </div>
+                <div class="actions">
+                    <button id="btn-complete" class="btn btn-complete">
+                        ✅ 完成
+                    </button>
+                    <button id="btn-snooze" class="btn btn-snooze">
+                        ${snoozeLabel}
+                    </button>
+                </div>
+            </div>
+        </body>
+    </html>`;
+    }
+
     // 顯示提醒視窗（含互動按鈕）
     showReminderToast(reminder) {
         this._closeReminderWindow();
@@ -511,110 +678,9 @@ class ReminderService {
         const snoozeCount = this.todayStatus[reminder.id]?.snoozeCount || 0;
         const snoozeLabel = snoozeCount > 0 ? `⏰ 稍後(已延${snoozeCount}次)` : '⏰ 稍後提醒';
 
-        const html = `
-    < !DOCTYPE html >
-        <html>
-            <head>
-                <meta charset="UTF-8">
-                    <style>
-                        body {
-                            margin: 0; padding: 0; overflow: hidden;
-                        font-family: 'Microsoft JhengHei', 'Segoe UI', sans-serif;
-                        background: transparent;
-                        animation: slideIn 0.4s ease-out;
-                }
-                        @keyframes slideIn {
-                            from {transform: translateX(-100%); opacity: 0; }
-                        to {transform: translateX(0); opacity: 1; }
-                }
-                        .toast {
-                            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
-                        border: 1px solid rgba(255,255,255,0.15);
-                        border-left: 4px solid #e94560;
-                        border-radius: 12px;
-                        padding: 16px 20px;
-                        color: #e0e0e0;
-                        box-shadow: 0 8px 32px rgba(0,0,0,0.4);
-                        height: calc(100vh - 34px);
-                        display: flex;
-                        flex-direction: column;
-                        justify-content: space-between;
-                }
-                        .title {
-                            font - size: 15px;
-                        font-weight: bold;
-                        color: #ffffff;
-                        margin-bottom: 6px;
-                }
-                        .message {
-                            font - size: 13px;
-                        line-height: 1.5;
-                        color: #b0b0b0;
-                        flex: 1;
-                }
-                        .actions {
-                            display: flex;
-                        gap: 10px;
-                        margin-top: 12px;
-                }
-                        .btn {
-                            flex: 1;
-                        padding: 8px 12px;
-                        border: none;
-                        border-radius: 8px;
-                        font-size: 13px;
-                        font-weight: bold;
-                        cursor: pointer;
-                        transition: all 0.2s;
-                        font-family: inherit;
-                }
-                        .btn-complete {
-                            background: linear-gradient(135deg, #2ecc71, #27ae60);
-                        color: #fff;
-                }
-                        .btn-complete:hover {
-                            background: linear-gradient(135deg, #27ae60, #1e8449);
-                        transform: scale(1.02);
-                }
-                        .btn-snooze {
-                            background: rgba(255,255,255,0.1);
-                        color: #999;
-                        border: 1px solid rgba(255,255,255,0.15);
-                }
-                        .btn-snooze:hover {
-                            background: rgba(255,255,255,0.15);
-                        color: #ccc;
-                }
-                    </style>
-                    <script>
-                // 增加點擊事件監聽，確保在 DOM 載入後執行
-                document.addEventListener('DOMContentLoaded', () => {
-                            document.getElementById('btn-complete').addEventListener('click', () => {
-                                window.reminderAPI.complete('${reminder.id}');
-                            });
-                    document.getElementById('btn-snooze').addEventListener('click', () => {
-                            window.reminderAPI.snooze('${reminder.id}');
-                    });
-                });
-                    </script>
-            </head>
-            <body>
-                <div class="toast">
-                    <div>
-                        <div class="title">${reminder.icon} ${reminder.title}</div>
-                        <div class="message">${messageHtml}</div>
-                    </div>
-                    <div class="actions">
-                        <button id="btn-complete" class="btn btn-complete">
-                            ✅ 完成
-                        </button>
-                        <button id="btn-snooze" class="btn btn-snooze">
-                            ${snoozeLabel}
-                        </button>
-                    </div>
-                </div>
-            </body>
-        </html>`;
+        // [v1.12.0] 使用穩定 API 渲染 HTML
+        const mascotUrl = this._getMascotUrl();
+        const html = this._renderReminderHtml(reminder, mascotUrl, snoozeLabel, messageHtml);
 
         // 寫入臨時檔案
         const tempPath = path.join(app.getPath('userData'), 'temp_reminder.html');

@@ -1,6 +1,6 @@
 {
     "name": "tienxin-productivity-assistant",
-    "version": "1.11.24",
+    "version": "1.11.26",
     "description": "添心生產力助手 - 智能工作追蹤與提醒系統",
     "main": "main.js",
     "scripts": {
