@@ -10,9 +10,11 @@ const axios = require('axios');
 const ical = require('node-ical');
 
 class ReminderService {
-    constructor(configManager, monitorService) {
+    // 注入 taskCenterService
+    constructor(configManager, monitorService, taskCenter) {
         this.config = configManager;
         this.monitorService = monitorService;
+        this.taskCenter = taskCenter;
         this.timers = [];
         this.reminderWindow = null;
 
