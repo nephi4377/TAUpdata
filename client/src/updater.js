@@ -130,66 +130,69 @@ class PatchUpdater {
         });
     }
 
-    downloadAndApplyPatch(url, filename, latestVersion) {
-        return new Promise((resolve, reject) => {
-            const tempZipPath = path.join(os.tmpdir(), filename);
-            const file = fs.createWriteStream(tempZipPath);
+    async downloadAndApplyPatch(url, filename, latestVersion) {
+        const tempZipPath = path.join(os.tmpdir(), filename);
+        const extractTempPath = path.join(versionService.tempPath, `patch_v${latestVersion}`);
 
-            const request = https.get(url, (response) => {
-                // Handle redirection (GitHub Releases usually redirects to AWS S3)
-                if (response.statusCode === 301 || response.statusCode === 302) {
-                    return https.get(response.headers.location, (redirectResponse) => {
-                        redirectResponse.pipe(file);
-                        this.handleFileStream(file, tempZipPath, latestVersion, resolve, reject);
-                    }).on('error', reject);
-                }
+        try {
+            log.info(`[PatchUpdater] 開始下載補丁: ${url}`);
+            await this.downloadFile(url, tempZipPath);
 
-                if (response.statusCode !== 200) {
-                    return reject(new Error(`下載失敗，狀態碼: ${response.statusCode}`));
-                }
+            log.info(`[PatchUpdater] 下載完成，開始解壓縮至暫存目錄: ${extractTempPath}`);
+            if (fs.existsSync(extractTempPath)) await fs.remove(extractTempPath);
+            await fs.ensureDir(extractTempPath);
 
-                response.pipe(file);
-                this.handleFileStream(file, tempZipPath, latestVersion, resolve, reject);
-            }).on('error', reject);
-        });
+            const zip = new AdmZip(tempZipPath);
+            zip.extractAllTo(extractTempPath, true);
+
+            // 執行熱更新原子化流程
+            log.info(`[PatchUpdater] 進入原子化交換流程...`);
+
+            // 1. 備份
+            await versionService.backup();
+
+            // 2. 套用更新
+            await versionService.applyUpdate(extractTempPath);
+
+            // 3. 健康檢查
+            const isHealthy = await versionService.validate();
+
+            if (isHealthy) {
+                log.info(`[PatchUpdater] 健康檢查通過，正式套用版本 v${latestVersion}`);
+                const patchVersionFile = path.join(this.userDataPath, 'patch_version.json');
+                await fs.writeJson(patchVersionFile, { version: latestVersion });
+
+                app.emit('patch-downloaded', tempZipPath);
+            } else {
+                log.warn(`[PatchUpdater] 健康檢查失敗，啟動自動回退！`);
+                await versionService.rollback();
+                throw new Error('新版本健康檢查未通過，已自動回退至原版本。');
+            }
+
+        } catch (error) {
+            log.error(`[PatchUpdater] 更新過程發生異常: ${error.message}`);
+            throw error;
+        } finally {
+            // 清理暫存檔
+            if (fs.existsSync(tempZipPath)) await fs.remove(tempZipPath);
+            if (fs.existsSync(extractTempPath)) await fs.remove(extractTempPath);
+        }
     }
 
-    handleFileStream(file, tempZipPath, latestVersion, resolve, reject) {
-        file.on('finish', () => {
-            file.close(() => {
-                log.info(`[PatchUpdater] 補丁下載完成: ${tempZipPath}，準備解壓縮套用...`);
-                try {
-                    // 解壓縮
-                    if (!fs.existsSync(this.patchDirPath)) {
-                        fs.mkdirSync(this.patchDirPath, { recursive: true });
-                    }
-
-                    const zip = new AdmZip(tempZipPath);
-                    // 覆蓋解壓至 patch 目錄
-                    zip.extractAllTo(this.patchDirPath, true);
-
-                    log.info(`[PatchUpdater] 解壓縮完成，準備觸發內部熱重啟`);
-
-                    // 寫入版本檔案
-                    const patchVersionFile = path.join(this.userDataPath, 'patch_version.json');
-                    fs.writeFileSync(patchVersionFile, JSON.stringify({ version: latestVersion }), 'utf8');
-
-                    // 觸發 application event
-                    app.emit('patch-downloaded', tempZipPath);
-
-                    resolve();
-                } catch (e) {
-                    log.error('[PatchUpdater] 解壓縮失敗:', e);
-                    reject(e);
-                } finally {
-                    // 清理暫存
-                    try {
-                        if (fs.existsSync(tempZipPath)) {
-                            fs.unlinkSync(tempZipPath);
-                        }
-                    } catch (ignore) { }
+    downloadFile(url, dest) {
+        return new Promise((resolve, reject) => {
+            const file = fs.createWriteStream(dest);
+            https.get(url, (response) => {
+                if (response.statusCode === 301 || response.statusCode === 302) {
+                    return https.get(response.headers.location, (redir) => {
+                        redir.pipe(file);
+                        file.on('finish', () => file.close(resolve));
+                    }).on('error', reject);
                 }
-            });
+                if (response.statusCode !== 200) return reject(new Error(`HTTP ${response.statusCode}`));
+                response.pipe(file);
+                file.on('finish', () => file.close(resolve));
+            }).on('error', reject);
         });
     }
 

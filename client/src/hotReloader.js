@@ -3,6 +3,10 @@ const path = require('path');
 const { app } = require('electron');
 const log = require('electron-log');
 const Module = require('module');
+// [IMMUTABLE_SHELL] -----------------------------------------------------------
+// 【核心承重牆 - 更新引擎】此檔案屬於「不可變殼層 (Immutable Shell)」。
+// 職責: 負責攔截 require 調用並實現動態沙盒載入，內建更新熔斷機制。
+// =============================================================================
 
 class HotReloader {
     get userDataPath() {
@@ -21,6 +25,7 @@ class HotReloader {
     loadModuleSafely(moduleName, localPath) {
         const absoluteLocalPath = path.resolve(__dirname, '..', localPath);
         const patchFilePath = path.join(this.patchDirPath, 'src', `${moduleName}.js`);
+        const isDev = !app.isPackaged;
 
         const loadOriginal = () => {
             const resolvedLocalPath = require.resolve(absoluteLocalPath);
@@ -30,8 +35,8 @@ class HotReloader {
             return require(absoluteLocalPath);
         };
 
-        // 檢查是否有補丁檔存在
-        if (fs.existsSync(patchFilePath)) {
+        // 檢查是否有補丁檔存在 (開發模式強制跳過補丁，優先使用本地源碼)
+        if (fs.existsSync(patchFilePath) && !isDev) {
             try {
                 log.info(`[HotReloader] 找到 ${moduleName} 補丁，嘗試加載...`);
 

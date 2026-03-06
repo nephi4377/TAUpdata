@@ -5,21 +5,24 @@ const { BrowserWindow, screen, ipcMain, app } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
-// [v1.10.0] iCloud 行事曆解析
-const axios = require('axios');
-const ical = require('node-ical');
+// [v1.12.0 API] 提醒管家已純化：僅負責 UI 渲染與排程，不處理網路解析。
 
 class ReminderService {
-    constructor(configManager, monitorService, taskCenter) {
+    constructor(configManager, monitorService, apiBridge) {
         this.config = configManager;
         this.monitorService = monitorService;
-        this.taskCenter = taskCenter;
+        this.apiBridge = apiBridge;
         this.timers = [];
         this.reminderWindow = null;
 
         // 今日提醒狀態追蹤
         // { reminderId: { status: 'pending'|'completed'|'snoozed', completedAt: Date, snoozeCount: 0 } }
         this.todayStatus = {};
+
+        // [v1.18.0] 提醒氣泡隊列系統 (Single Bubble Queue)
+        this.reminderQueue = [];
+        this.isShowingReminder = false;
+        this.queueGapMs = 2000; // 氣泡間隔 2 秒
 
         // 提醒規則定義
         this.reminders = [
@@ -29,22 +32,22 @@ class ReminderService {
                 icon: '⏰',
                 title: '打卡提醒',
                 message: '您今天尚未打卡，請記得使用 LINE 打卡！',
-                timeWindow: { startOffset: 30 },
+                timeWindow: { start: '08:25' },
                 frequency: 'daily',
                 condition: 'not_checked_in'
             },
             {
-                id: 'daily_schedule',
-                icon: '📋',
-                title: '確認今日工地排程',
-                message: '確認今日工地巡檢排程，掌握各工地施工階段。',
+                id: 'site_arrangement',
+                icon: '🏠',
+                title: '確認工地安排',
+                message: '確認今日與明日工地巡檢排程，掌握各工地施工階段。',
                 timeWindow: { start: '09:00', end: '09:30' },
                 frequency: 'daily'
             },
             {
                 id: 'client_msg_1',
                 icon: '📨',
-                title: '確認客戶訊息',
+                title: '確認客戶訊息(上午)',
                 message: '確認客戶/業主訊息是否已回覆，不要讓客戶等太久！',
                 timeWindow: { start: '09:30', end: '10:30' },
                 frequency: 'daily'
@@ -53,62 +56,46 @@ class ReminderService {
                 id: 'site_photo_report',
                 icon: '📸',
                 title: '施工照片回報客戶',
-                message: '記得傳今日施工照片給客戶，附上施工進度說明。\n讓客戶安心，是最好的服務！',
+                message: '記得傳今日施工照片給客戶，附上施工進度說明。',
                 timeWindow: { start: '10:30', end: '11:30' },
                 frequency: 'daily'
             },
             {
                 id: 'client_msg_2',
                 icon: '📨',
-                title: '確認客戶訊息',
+                title: '確認客戶訊息(下午)',
                 message: '下午了，再確認一次客戶訊息有沒有漏回的。',
                 timeWindow: { start: '14:00', end: '15:00' },
-                frequency: 'daily'
-            },
-            {
-                id: 'tomorrow_plan',
-                icon: '🏠',
-                title: '確認明日工地安排',
-                message: '確認明日工地安排，提前做好準備。',
-                timeWindow: { beforeOff: 60 },
                 frequency: 'daily'
             },
             {
                 id: 'daily_report',
                 icon: '📊',
                 title: '今日工作回報',
-                message: '今日工作回報完成了嗎？\n趁記憶還清晰，快點記錄今天的進度！',
+                message: '今日工作回報完成了嗎？快點記錄今天的進度！',
                 timeWindow: { beforeOff: 30 },
+                frequency: 'daily'
+            },
+
+            // ═══ 下班前提醒 ═══
+            {
+                id: 'tomorrow_site_arrangement',
+                icon: '📋',
+                title: '確認明日工地安排',
+                message: '確認明日工地巡檢與師傅排程，提前通知相關人員。',
+                timeWindow: { beforeOff: 60 },
                 frequency: 'daily'
             },
 
             // ═══ 每週固定提醒 ═══
             {
-                id: 'monday_pending',
+                id: 'recurring_pending',
                 icon: '📑',
                 title: '追蹤未結案件',
-                message: '追蹤未結案/收尾案件進度。\n新的一週，確認各案件狀態。',
+                message: '固定追蹤未結案/收尾案件進度，確保案件準時推進。',
                 timeWindow: { start: '10:00', end: '11:00' },
                 frequency: 'weekly',
                 dayOfWeek: 1
-            },
-            {
-                id: 'monday_invoice',
-                icon: '🧾',
-                title: '確認請款/發票進度',
-                message: '確認請款/發票進度，有沒有延遲的？',
-                timeWindow: { start: '14:00', end: '15:00' },
-                frequency: 'weekly',
-                dayOfWeek: 1
-            },
-            {
-                id: 'friday_tools',
-                icon: '🔧',
-                title: '工具設備歸還確認',
-                message: '週五收工前，確認工具設備是否歸還。',
-                timeWindow: { start: '16:00', end: '17:00' },
-                frequency: 'weekly',
-                dayOfWeek: 5
             },
             {
                 id: 'friday_next_week',
@@ -120,6 +107,24 @@ class ReminderService {
                 dayOfWeek: 5
             }
         ];
+
+        // ═══ 未結案追蹤 (週二/四/六) [v26.03.04 計劃書對齊] ═══
+        const openCaseDays = [
+            { day: 2, label: '週二' },
+            { day: 4, label: '週四' },
+            { day: 6, label: '週六' }
+        ];
+        openCaseDays.forEach(d => {
+            this.reminders.push({
+                id: `open_case_${d.label}`,
+                icon: '📑',
+                title: '追蹤未結案件',
+                message: `${d.label}固定追蹤：檢查未結案/收尾案件進度，確保案件準時推進。`,
+                timeWindow: { start: '10:00', end: '11:00' },
+                frequency: 'weekly',
+                dayOfWeek: d.day
+            });
+        });
 
         // 註冊 IPC 事件（提醒視窗的「完成」和「稍後」按鈕）
         this._registerIpcHandlers();
@@ -142,36 +147,61 @@ class ReminderService {
         ipcMain.handle('reminder-complete', (event, reminderId) => {
             console.log(`[Reminder] ✅ 已完成: ${reminderId}`);
             try {
-                this.todayStatus[reminderId] = {
-                    status: 'completed',
-                    completedAt: new Date().toISOString()
-                };
-                // 更新提醒歷史
+                // [v1.17.2] 合併更新：保留 isIcloud、title 等原始屬性
+                if (!this.todayStatus[reminderId]) {
+                    this.todayStatus[reminderId] = {};
+                }
+                this.todayStatus[reminderId].status = 'completed';
+                this.todayStatus[reminderId].completedAt = new Date().toISOString();
                 this._saveReminderHistory(reminderId);
-                // [v1.2] 儲存今日狀態
                 this._saveTodayStatus();
 
-                // 強制關閉發送該 IPC 請求的視窗
-                // [v1.8.9b Fix] 避開關閉「詳細統計」視窗，只關閉提醒通知視窗
                 const win = BrowserWindow.fromWebContents(event.sender);
                 if (win && !win.isDestroyed()) {
                     const title = win.getTitle();
-                    if (title !== '添心生產力助手 - 詳細統計' && title !== '管理員報表中心') {
+                    const bounds = win.getBounds();
+
+                    // [v1.17.5 Fix] 強化判定：提醒視窗寬度固定 400，且不含統計中心關鍵字
+                    const isToast = bounds.width === 400 &&
+                        !title.includes('詳細統計') &&
+                        !title.includes('報表中心') &&
+                        !title.includes('統計中心');
+
+                    if (isToast) {
+                        console.log('[Reminder] 強制關閉氣泡視窗');
                         win.close();
                     } else {
-                        // 如果是統計視窗，則發送訊息通知其刷新 UI（如果有的話）
                         win.webContents.send('reminder-status-updated', reminderId);
                     }
                 }
 
-                // 如果正好是我們最後追蹤的視窗，順便清空參考
-                if (this.reminderWindow === win) {
-                    this.reminderWindow = null;
-                }
+                // [v26.03.04 Fix] 保底關閉：即使 fromWebContents 返回 null 也能關閉
+                this._closeReminderWindow();
+
+                // [v1.17.2] 觸發里程碑鼓勵檢查
+                this._checkMilestoneEncouragement();
+
+                // [v1.15.8] 通知統計中心刷新
+                this._notifyStatusUpdated(reminderId);
 
                 return { success: true };
             } catch (err) {
                 console.error('[Reminder] 完成操作失敗:', err);
+                return { success: false, error: err.message };
+            }
+        });
+
+        ipcMain.handle('reminder-undo', (event, reminderId) => {
+            console.log(`[Reminder] ↺ 撤銷完成: ${reminderId}`);
+            try {
+                if (this.todayStatus[reminderId]) {
+                    this.todayStatus[reminderId].status = 'pending';
+                    this.todayStatus[reminderId].completedAt = null;
+                    this._saveTodayStatus();
+                }
+                return { success: true };
+            } catch (err) {
+                console.error('[Reminder] 撤銷操作失敗:', err);
                 return { success: false, error: err.message };
             }
         });
@@ -181,7 +211,9 @@ class ReminderService {
             try {
                 const current = this.todayStatus[reminderId] || {};
                 const snoozeCount = (current.snoozeCount || 0) + 1;
+                // [v26.03.04 Fix] 合併更新：保留 isIcloud、title 等原始屬性
                 this.todayStatus[reminderId] = {
+                    ...current,
                     status: 'snoozed',
                     snoozeCount
                 };
@@ -191,17 +223,20 @@ class ReminderService {
                 // 強制關閉發送該 IPC 請求的視窗（解決孤兒視窗無法關閉的問題）
                 const win = BrowserWindow.fromWebContents(event.sender);
                 if (win && !win.isDestroyed()) {
-                    win.close();
+                    const title = win.getTitle();
+                    if (!title.includes('添心生產力助手 - 詳細統計') && !title.includes('管理員報表中心') && !title.includes('添心統計中心')) {
+                        win.close();
+                    }
                 }
 
                 if (this.reminderWindow === win) {
                     this.reminderWindow = null;
                 }
 
-                // 如果是本機自訂提醒 (id 為純數字或特定格式)
-                if (typeof reminderId === 'number' || !isNaN(reminderId)) {
-                    this.monitorService.storage.updateTaskStatus(reminderId, 'completed');
-                }
+                // [v26.03.04 Fix] 保底關閉：確保提醒視窗一定被關閉
+                this._closeReminderWindow();
+
+                // [v26.03.04 Fix] 已移除錯誤邏輯：snooze 不應將任務標記為 completed
 
                 // 20 分鐘後再提醒 (iCloud/系統提醒)
                 const reminder = this.reminders.find(r => r.id === reminderId);
@@ -221,15 +256,29 @@ class ReminderService {
                 return { success: false, error: err.message };
             }
         });
+
+        ipcMain.handle('reminder-close', (event) => {
+            console.log('[Reminder] 收到前端關閉請求');
+            const win = BrowserWindow.fromWebContents(event.sender);
+            if (win && !win.isDestroyed()) {
+                win.close();
+            }
+            if (this.reminderWindow === win) {
+                this.reminderWindow = null;
+            }
+            return { success: true };
+        });
     }
 
     // [v1.11.0] 初始化本機提醒掃描
     _initLocalReminderCheck() {
         console.log('[Reminder] 啟動本機自訂提醒定時掃描 (1分鐘/次)');
         const timer = setInterval(() => {
+            this.checkDailyReset(); // [v26.03.04] 優先檢查是否跨日
             this._checkLocalReminders();
         }, 60 * 1000);
         this.timers.push(timer);
+        this.checkDailyReset();
         this._checkLocalReminders();
     }
 
@@ -244,12 +293,13 @@ class ReminderService {
             if (now.getHours() === 0 && now.getMinutes() === 0) {
                 if (!this._lastResetDate || this._lastResetDate !== todayStr) {
                     console.log('[Reminder] 凌晨重置重複任務狀態');
-                    this.monitorService.storage.resetRepeatingTasks(todayStr);
+                    this.monitorService.storageService.resetRepeatingTasks(todayStr);
                     this._lastResetDate = todayStr;
                 }
             }
 
-            const tasks = this.monitorService.storage.getLocalTasks();
+
+            const tasks = this.monitorService.storageService.getLocalTasks();
             for (const task of tasks) {
                 if (task.status === 'completed') continue;
 
@@ -265,7 +315,7 @@ class ReminderService {
                             message: `這是最高優先級任務，請務必處理！\n（本提醒將每 20 分鐘出現一次，直到完成）`
                         }, todayStr);
                         // 更新最後發送時間 (此處我們暫借用 reminder_sent 邏輯，但為了週期性，需更新資料庫時間)
-                        this.monitorService.storage.db.run(`UPDATE local_tasks SET last_reminder_at = ? WHERE id = ?`, [now.toISOString(), task.id]);
+                        this.monitorService.storageService.db.run(`UPDATE local_tasks SET last_reminder_at = ? WHERE id = ?`, [now.toISOString(), task.id]);
                     }
                     continue; // 緊急模式獨立處理，不走一般排程
                 }
@@ -295,7 +345,7 @@ class ReminderService {
                             message: `時間: ${task.due_time}\n${task.repeat_type !== 'none' ? '週期: ' + task.repeat_type : ''}`
                         }, todayStr);
 
-                        this.monitorService.storage.updateReminderSent(task.id);
+                        this.monitorService.storageService.updateReminderSent(task.id);
                     }
                 }
             }
@@ -378,7 +428,9 @@ class ReminderService {
                 // 特殊規則：打卡提醒 (checkin_reminder) 即使過期也要補彈！
                 if (reminder.id === 'checkin_reminder') {
                     const workInfo = this.config.getTodayWorkInfo();
-                    if (workInfo && !workInfo.checkedIn) {
+                    const isCheckedIn = workInfo && workInfo.checkedIn;
+                    if (!isCheckedIn) {
+                        console.log('[Reminder] 偵測到尚未打卡，準備執行 10s 補彈提醒...');
                         triggerTime = new Date(now.getTime() + 10000); // 10秒後補彈
                     } else {
                         continue;
@@ -402,14 +454,6 @@ class ReminderService {
         }
 
         console.log(`[Reminder] 今日共排程 ${scheduledCount} 個提醒，待完成 ${Object.keys(this.todayStatus).length} 項`);
-
-        // [v1.10.0] iCloud 行事曆同步
-        this._syncIcloudCalendar(shiftStartMinutes, offTimeMinutes, todayStr);
-        // 設定每 30 分鐘同步一次 iCloud
-        const icloudTimer = setInterval(() => {
-            this._syncIcloudCalendar(shiftStartMinutes, offTimeMinutes, todayStr);
-        }, 30 * 60 * 1000);
-        this.timers.push(icloudTimer);
     }
 
     // 判斷是否應在今天觸發（不限制週末，因為室內裝修業經常週六上班）
@@ -452,6 +496,8 @@ class ReminderService {
     // 計算觸發時間
     calculateTriggerTime(reminder, now, shiftStartMinutes, offTimeMinutes) {
         const tw = reminder.timeWindow;
+        // [v1.17.1] 防禦性設計：iCloud 動態提醒無 timeWindow，直接返回 null
+        if (!tw) return null;
         let startMinutes, endMinutes;
 
         if (tw.start && tw.end) {
@@ -459,6 +505,11 @@ class ReminderService {
             const [eh, em] = tw.end.split(':').map(Number);
             startMinutes = sh * 60 + sm;
             endMinutes = eh * 60 + em;
+        } else if (tw.start && !tw.end) {
+            // [v1.17.1] 僅有 start 的 timeWindow (如打卡提醒)：預設 15 分鐘視窗
+            const [sh, sm] = tw.start.split(':').map(Number);
+            startMinutes = sh * 60 + sm;
+            endMinutes = startMinutes + 15;
         } else if (tw.startOffset !== undefined) {
             startMinutes = shiftStartMinutes + tw.startOffset;
             endMinutes = startMinutes + 15;
@@ -479,40 +530,87 @@ class ReminderService {
 
     // 觸發提醒
     fireReminder(reminder, todayStr) {
-        console.log(`[Reminder] 觸發提醒: ${reminder.icon} ${reminder.title} `);
+        console.log(`[Reminder] 觸發提醒: ${reminder.icon} ${reminder.title}`);
+
+        // [v1.17.3] 支援帶有 message 的外部提醒
+        const reminderId = reminder.id;
+        const currentStatus = this.todayStatus[reminderId] || { status: 'pending' };
 
         // 如果已完成，不再提醒
-        if (this.todayStatus[reminder.id]?.status === 'completed') {
-            console.log(`[Reminder] ${reminder.id} 已完成，跳過`);
+        if (currentStatus.status === 'completed') {
+            console.log(`[Reminder] ${reminderId} 已完成，跳過`);
             return;
         }
 
-        // 特殊條件檢查
+        // [v26.03.04 Fix] 強化打卡判定：只要有打卡時間（即使 backend 旗標未同步），亦自動完成任務
         if (reminder.condition === 'not_checked_in') {
             const workInfo = this.config.getTodayWorkInfo();
-            if (workInfo && workInfo.checkedIn) {
-                console.log('[Reminder] 已打卡，自動標記完成');
-                this.todayStatus[reminder.id] = {
+            const isActuallyCheckedIn = workInfo && (workInfo.checkedIn || (workInfo.checkinTime && workInfo.checkinTime !== '--:--'));
+
+            if (isActuallyCheckedIn) {
+                console.log('[Reminder] 偵測到已有打卡記錄，自動標記提醒任務為 Done');
+                this.todayStatus[reminderId] = {
+                    ...currentStatus,
                     status: 'completed',
                     completedAt: new Date().toISOString(),
                     autoCompleted: true
                 };
+                this._saveTodayStatus();
+                this._notifyStatusUpdated(reminderId);
                 return;
             }
         }
 
-        // 顯示提醒視窗（含完成/稍後按鈕）
+        // [v1.18.0] 改為排隊模式，避免一次噴出多個氣泡
+        this.reminderQueue.push(reminder);
+        this.processQueue();
+    }
+
+    /**
+     * [v1.18.0] 處理提醒隊列
+     */
+    processQueue() {
+        if (this.isShowingReminder || this.reminderQueue.length === 0) return;
+
+        console.log(`[Reminder] 隊列處理中... 剩餘: ${this.reminderQueue.length}`);
+        const reminder = this.reminderQueue.shift();
+        this.isShowingReminder = true;
         this.showReminderToast(reminder);
     }
 
     /**
-     * [v1.12.0 API] 取得秘書頭像 URL
+     * [v26.03.04 計劃書對齊] 取得秘書頭像 URL（與統計中心當日換裝同步）
      */
     _getMascotUrl() {
-        const mascotGender = this.config.getMascotGender();
-        return mascotGender === 'male'
-            ? 'https://raw.githubusercontent.com/nephi4377/TAUpdata/master/client/assets/secretary_male.png'
-            : 'https://raw.githubusercontent.com/nephi4377/TAUpdata/master/client/assets/secretary.png';
+        const gender = this.config.getMascotGender() || 'female';
+        const skin = this.config.getMascotSkin() || 'default';
+
+        let fname;
+        if (gender === 'female' && skin !== 'default') {
+            fname = `secretary_${skin}.png`;
+        } else if (gender === 'female') {
+            fname = 'secretary.png';
+        } else {
+            fname = 'secretary_male.png';
+        }
+
+        // 優先使用本地快取的 base64（與統計中心頭像完全一致）
+        const localAssetPath = path.join(__dirname, '..', 'assets', fname);
+        const cacheDir = path.join(app.getPath('userData'), 'mascot_cache');
+        const cachedPath = path.join(cacheDir, fname);
+        const imgPath = fs.existsSync(cachedPath) ? cachedPath : (fs.existsSync(localAssetPath) ? localAssetPath : null);
+
+        if (imgPath) {
+            try {
+                const imgBuffer = fs.readFileSync(imgPath);
+                return `data:image/png;base64,${imgBuffer.toString('base64')}`;
+            } catch (e) {
+                console.warn('[Reminder] 頭像讀取失敗:', e.message);
+            }
+        }
+
+        // 降級：遠端 URL
+        return `https://raw.githubusercontent.com/nephi4377/TAUpdata/master/client/assets/${fname}`;
     }
 
     /**
@@ -526,121 +624,180 @@ class ReminderService {
         <head>
             <meta charset="UTF-8">
             <style>
-                body {
+                * { box-sizing: border-box; }
+                html, body {
                     margin: 0; padding: 0; overflow: hidden;
-                    font-family: 'Microsoft JhengHei', 'Segoe UI', sans-serif;
-                    background: transparent;
-                    animation: slideIn 0.4s ease-out;
-                }
-                @keyframes slideIn {
-                    from {transform: translateX(-100%); opacity: 0; }
-                    to {transform: translateX(0); opacity: 1; }
+                    font-family: "Microsoft JhengHei", "Segoe UI", sans-serif;
+                    background: transparent !important;
                 }
                 .toast {
-                    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
-                    border: 1px solid rgba(255,255,255,0.15);
-                    border-left: 4px solid #e94560;
-                    border-radius: 12px;
-                    padding: 16px;
-                    color: #e0e0e0;
-                    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
-                    height: calc(100vh - 34px);
+                    background: #ffffff; 
+                    border: 1px solid #f0f4f4; 
+                    border-left: 6px solid #e67e22;
+                    border-radius: 18px; 
+                    padding: 24px;
+                    color: #2c3e50; 
+                    box-shadow: 0 4px 20px rgba(0,0,0,0.03);
+                    height: 100vh;
                     display: flex;
                     flex-direction: column;
+                    position: relative;
+                    animation: slideIn 0.5s cubic-bezier(0.18, 0.89, 0.32, 1.28);
                 }
+                @keyframes slideIn {
+                    from {transform: translateX(-110%); opacity: 0; }
+                    to {transform: translateX(0); opacity: 1; }
+                }
+                .close-x {
+                    position: absolute;
+                    top: 14px;
+                    right: 16px;
+                    font-size: 22px;
+                    color: #d7ccc8;
+                    cursor: pointer;
+                    transition: color 0.2s;
+                    line-height: 1;
+                    opacity: 0.5;
+                }
+                .close-x:hover { color: #e67e22; opacity: 1; }
+                
                 .content-area {
                     display: flex;
-                    gap: 15px;
+                    gap: 18px;
                     flex: 1;
+                    overflow: hidden;
+                }
+                .right-column {
+                    display: flex;
+                    flex-direction: column;
+                    flex: 1;
+                    overflow: hidden;
                 }
                 .avatar-box {
-                    width: 60px;
-                    height: 90px;
-                    border-radius: 8px;
-                    background: url('${mascotUrl}') center/cover;
-                    border: 1px solid rgba(78, 205, 196, 0.5);
+                    width: 90px; 
+                    height: 135px; /* 最大化 1:1.5 proportion */
+                    border-radius: 14px;
+                    background: url('${mascotUrl}') top center / cover no-repeat;
+                    border: 2px solid #e67e22;
                     flex-shrink: 0;
+                    background-color: #f9f7f2;
                 }
                 .text-box {
                     flex: 1;
                     display: flex;
                     flex-direction: column;
+                    overflow-y: auto;
+                    padding-top: 4px;
                 }
                 .title {
-                    font-size: 15px;
-                    font-weight: bold;
-                    color: #ffffff;
-                    margin-bottom: 4px;
+                    font-size: 17px;
+                    font-weight: 800;
+                    margin-bottom: 8px;
+                    padding-right: 28px;
+                    color: #2c3e50;
+                    display: flex;
+                    align-items: center;
+                    gap: 6px;
                 }
                 .message {
-                    font-size: 13px;
-                    line-height: 1.4;
-                    color: #b0b0b0;
+                    font-size: 14px;
+                    line-height: 1.6;
+                    color: #64748b;
                     overflow-y: auto;
+                    flex: 1;
+                    word-break: break-all;
+                    white-space: pre-wrap;
                 }
                 .actions {
                     display: flex;
+                    justify-content: flex-end;
                     gap: 10px;
                     margin-top: 12px;
+                    flex-shrink: 0;
                 }
                 .btn {
-                    flex: 1;
-                    padding: 8px 12px;
+                    padding: 10px 22px;
                     border: none;
-                    border-radius: 8px;
-                    font-size: 13px;
-                    font-weight: bold;
+                    border-radius: 12px; 
+                    font-size: 14px;
+                    font-weight: 800;
                     cursor: pointer;
                     transition: all 0.2s;
-                    font-family: inherit;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    gap: 6px;
                 }
                 .btn-complete {
-                    background: linear-gradient(135deg, #2ecc71, #27ae60);
+                    background: linear-gradient(135deg, #10b981, #059669);
                     color: #fff;
-                }
-                .btn-complete:hover {
-                    background: linear-gradient(135deg, #27ae60, #1e8449);
-                    transform: scale(1.02);
+                    box-shadow: 0 4px 10px rgba(16, 185, 129, 0.2);
+                    min-width: 100px;
                 }
                 .btn-snooze {
-                    background: rgba(255,255,255,0.1);
-                    color: #999;
-                    border: 1px solid rgba(255,255,255,0.15);
+                    background: #fdfcf9;
+                    color: #64748b;
+                    border: 1px solid #f0e6d6;
+                    padding: 8px 16px;
                 }
-                .btn-snooze:hover {
-                    background: rgba(255,255,255,0.15);
-                    color: #ccc;
+                .btn:active { transform: scale(0.97); }
+                
+                .progress-bar {
+                    position: absolute;
+                    bottom: 0;
+                    left: 0;
+                    height: 4px;
+                    background: linear-gradient(to right, #e67e22, #ffa726);
+                    width: 100%;
+                    animation: countdown 18s linear forwards;
+                    border-radius: 0 0 18px 18px;
+                }
+                @keyframes countdown {
+                    from { width: 100%; }
+                    to { width: 0%; }
                 }
             </style>
-            <script>
-                document.addEventListener('DOMContentLoaded', () => {
-                    document.getElementById('btn-complete').addEventListener('click', () => {
-                        window.reminderAPI.complete('${reminder.id}');
-                    });
-                    document.getElementById('btn-snooze').addEventListener('click', () => {
-                        window.reminderAPI.snooze('${reminder.id}');
-                    });
-                });
-            </script>
         </head>
         <body>
             <div class="toast">
+                <div class="close-x" id="btn-close">×</div>
                 <div class="content-area">
                     <div class="avatar-box"></div>
-                    <div class="text-box">
-                        <div class="title">${reminder.icon} ${reminder.title}</div>
-                        <div class="message">${messageHtml}</div>
+                    <div class="right-column">
+                        <div class="text-box">
+                            <div class="title"><span>${reminder.icon}</span> <span>${reminder.title}</span></div>
+                            <div class="message">${messageHtml}</div>
+                        </div>
+                        <div class="actions">
+                            <button id="btn-complete" class="btn btn-complete">✅ 完成</button>
+                            <button id="btn-snooze" class="btn btn-snooze">${snoozeLabel}</button>
+                        </div>
                     </div>
                 </div>
-                <div class="actions">
-                    <button id="btn-complete" class="btn btn-complete">
-                        ✅ 完成
-                    </button>
-                    <button id="btn-snooze" class="btn btn-snooze">
-                        ${snoozeLabel}
-                    </button>
-                </div>
+                <div class="progress-bar"></div>
             </div>
+
+            <script>
+                document.addEventListener('DOMContentLoaded', () => {
+                    const callAPI = (method, id) => {
+                        if (window.reminderAPI && window.reminderAPI[method]) {
+                            window.reminderAPI[method](id);
+                        } else {
+                            console.warn('reminderAPI not found, using window.close');
+                            window.close();
+                        }
+                    };
+
+                    document.getElementById('btn-complete').addEventListener('click', () => callAPI('complete', '${reminder.id}'));
+                    document.getElementById('btn-snooze').addEventListener('click', () => callAPI('snooze', '${reminder.id}'));
+                    document.getElementById('btn-close').addEventListener('click', () => callAPI('close'));
+
+                    // 18 秒後自動關閉
+                    setTimeout(() => {
+                        callAPI('close');
+                    }, 18000);
+                });
+            </script>
         </body>
     </html>`;
     }
@@ -686,14 +843,22 @@ class ReminderService {
         const tempPath = path.join(app.getPath('userData'), 'temp_reminder.html');
         try {
             fs.writeFileSync(tempPath, html);
-            this.reminderWindow.loadFile(tempPath);
-        } catch (err) {
-            console.error('[Reminder] 無法寫入臨時檔案:', err);
-            // fallback
             this.reminderWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+        } catch (e) {
+            console.error('[Reminder] 無法顯示提醒視窗:', e);
         }
 
-        // 不自動關閉！使用者必須點按鈕
+        this.reminderWindow.once('ready-to-show', () => this.reminderWindow.show());
+
+        // [v1.18.0] 監聽視窗關閉，觸發隊列遞補
+        this.reminderWindow.once('closed', () => {
+            console.log('[Reminder] 氣泡已關閉，準備遞補下一個...');
+            this.reminderWindow = null;
+            this.isShowingReminder = false;
+
+            // 間隔 2 秒後再噴出下一個，讓畫面有呼吸感
+            setTimeout(() => this.processQueue(), this.queueGapMs);
+        });
     }
 
     // 關閉提醒視窗
@@ -712,26 +877,110 @@ class ReminderService {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // 對外 API（供托盤選單和報告使用）
+    // 對外 API（供托盤選單、報告、Firebase 轉發使用）
     // ═══════════════════════════════════════════════════════════════
 
-    // 取得今日提醒狀態列表（供托盤選單顯示）
+    /**
+     * [v26.03.04 新增] 接收外部訊息推送 (LINE/FB)
+     * @param {object} data - { id, title, message, source, senderName, siteName }
+     */
+
+
+
+    // 取得今日提醒狀態列表（供統計中心顯示，具備時間過濾）
     getTodayReminderStatus() {
         const statusList = [];
+        const processedIds = new Set();
+        const now = new Date();
+        const nowMinutes = now.getHours() * 60 + now.getMinutes();
 
-        for (const [id, status] of Object.entries(this.todayStatus)) {
-            const reminder = this.reminders.find(r => r.id === id);
-            if (!reminder) continue;
+        // 取得今日工作時間背景
+        const workInfo = this.config.getTodayWorkInfo();
+        const boundEmployee = this.config.getBoundEmployee();
+        let shiftStartMinutes = 8 * 60 + 30;
+        let shiftEndMinutes = 17 * 60 + 30;
+        let offTimeMinutes = shiftEndMinutes;
 
-            statusList.push({
-                id: reminder.id,
-                icon: reminder.icon,
-                title: reminder.title,
-                status: status.status,
-                completedAt: status.completedAt || null,
-                autoCompleted: status.autoCompleted || false
-            });
+        if (boundEmployee) {
+            if (boundEmployee.shiftStart) {
+                const [h, m] = boundEmployee.shiftStart.split(':').map(Number);
+                shiftStartMinutes = h * 60 + m;
+            }
+            if (boundEmployee.shiftEnd) {
+                const [h, m] = boundEmployee.shiftEnd.split(':').map(Number);
+                shiftEndMinutes = h * 60 + m;
+            }
         }
+        if (workInfo && workInfo.expectedOffTime) {
+            const [h, m] = workInfo.expectedOffTime.split(':').map(Number);
+            offTimeMinutes = h * 60 + m;
+        }
+
+        // 1. 以當前排程中的提醒清單為基準
+        for (const reminder of this.reminders) {
+            // [v26.03.04 Fix] 週排程過濾：非今天的 weekly 提醒不顯示
+            if (reminder.frequency === 'weekly' && reminder.dayOfWeek !== undefined) {
+                const todayDay = now.getDay();
+                if (todayDay !== reminder.dayOfWeek) continue;
+            }
+
+            const status = this.todayStatus[reminder.id] || { status: 'pending' };
+            const isCompleted = status.status === 'completed';
+
+            // 計算此提醒的基準觸發時間 (不含隨機)
+            const triggerTime = this.calculateTriggerTime(reminder, now, shiftStartMinutes, offTimeMinutes);
+            const triggerTimeMinutes = triggerTime ? (triggerTime.getHours() * 60 + triggerTime.getMinutes()) : 0;
+
+            // [v1.16.2] 精確顯示判定
+            const isCheckin = reminder.id === 'checkin_reminder';
+            const isIcloud = reminder.isIcloud === true;
+            // [v1.17.1] iCloud 行程直接顯示（不受時間過濾）
+            if (isIcloud || isCompleted || isCheckin || (triggerTimeMinutes > 0 && nowMinutes >= triggerTimeMinutes)) {
+                statusList.push({
+                    id: reminder.id,
+                    icon: reminder.icon,
+                    title: reminder.title,
+                    status: status.status
+                });
+            }
+            processedIds.add(reminder.id);
+        }
+
+        // 2. 動態行程處理 (iCloud / Local Tasks)
+        for (const [id, status] of Object.entries(this.todayStatus)) {
+            if (processedIds.has(id)) continue;
+
+            // [v1.17.5 Fix] 增加外部訊息 (isExternal) 判定，排除重複的基礎 ID
+            const isExternal = status.isExternal === true;
+            const isCompleted = status.status === 'completed';
+            let shouldShow = isCompleted || isExternal;
+
+            // 針對 iCloud 行程：[v1.17.1] 全部顯示
+            if (id.toString().startsWith('icloud_')) {
+                shouldShow = true;
+            }
+
+            if (shouldShow) {
+                let title = status.title || `任務 #${id} `;
+                statusList.push({
+                    id: id,
+                    icon: status.icon || (id.toString().startsWith('icloud_') ? '🍏' : (isExternal ? '💬' : '⏰')),
+                    title: title,
+                    status: status.status,
+                    completedAt: status.completedAt || null,
+                    autoCompleted: status.autoCompleted || false,
+                    isIcloud: id.toString().startsWith('icloud_'),
+                    isExternal: isExternal
+                });
+            }
+        }
+
+        // [v1.16.3] 專家級排序：未完成 (pending) 置頂，已完成 (completed) 沉底
+        statusList.sort((a, b) => {
+            if (a.status === 'pending' && b.status !== 'pending') return -1;
+            if (a.status !== 'pending' && b.status === 'pending') return 1;
+            return 0;
+        });
 
         return statusList;
     }
@@ -780,10 +1029,35 @@ class ReminderService {
 
     // 日期格式化
     _formatDate(date) {
+        if (!date) date = new Date();
         const year = date.getFullYear();
         const month = String(date.getMonth() + 1).padStart(2, '0');
         const day = String(date.getDate()).padStart(2, '0');
         return `${year}-${month}-${day}`;
+    }
+
+    /**
+     * [v26.03.04] 每日數據清洗門戶：確保跨天時自動重置狀態
+     */
+    checkDailyReset() {
+        const now = new Date();
+        const todayStr = this._formatDate(now);
+
+        if (!this.lastCheckDate) {
+            this.lastCheckDate = todayStr;
+            return;
+        }
+
+        if (this.lastCheckDate !== todayStr) {
+            console.log(`[Reminder] 📅 偵測到跨日 (${this.lastCheckDate} -> ${todayStr})，自動清空過期狀態...`);
+            this.todayStatus = {};
+            this.reminders = this.reminders.filter(r => !r.isIcloud && !r.isTomorrowPreview);
+            this.config.set('reminderDailyState', null);
+            this.lastCheckDate = todayStr;
+
+            // 通知 UI 刷新
+            this._notifyStatusUpdated('day_reset');
+        }
     }
 
     // [v1.2] 儲存今日提醒狀態到設定檔
@@ -805,9 +1079,22 @@ class ReminderService {
         try {
             const savedData = this.config.get('reminderDailyState');
             if (savedData && savedData.date === todayStr) {
-                console.log('[Reminder] 發現今日已存狀態，正在恢復...');
-                this.todayStatus = savedData.status || {};
+                console.log('[Reminder] 發現今日已存狀態，正在恢復並清洗...');
+                const rawStatus = savedData.status || {};
 
+                // [v1.13.2] 狀態清洗：僅保留現有規則中存在的 ID 或 iCloud 動態 ID
+                const activeIds = new Set(this.reminders.map(r => r.id));
+                const cleanedStatus = {};
+
+                for (const [id, s] of Object.entries(rawStatus)) {
+                    // [v1.17.2] 多重防護：isIcloud 標記 OR icloud_ 前綴比對
+                    if (activeIds.has(id) || s.isIcloud || id.toString().startsWith('icloud_')) {
+                        cleanedStatus[id] = s;
+                    } else {
+                        console.log(`[Reminder] 已移除過時的狀態紀錄: ${id} `);
+                    }
+                }
+                this.todayStatus = cleanedStatus;
                 // 修正：將存檔中的 completedAt 轉回 Date 對象 (如果有需要)
                 return true;
             } else {
@@ -823,105 +1110,331 @@ class ReminderService {
         }
     }
 
-    // [v1.11.8 Update] iCloud 行事曆抓取解析與即時提醒排程
-    async _syncIcloudCalendar(shiftStartMinutes, offTimeMinutes, todayStr) {
-        const url = this.config.getIcloudCalendarUrl();
-        if (!url) return;
+    // [v1.12.0 Pure Remind] 僅負責根據 apiBridge 提供之資料進行提醒排程
+    // [v1.13.0 專家職責] 接收由 ApiBridge 同步之雲端行程，僅負責排程自治
+    updateIcloudReminders(icloudEvents, todayStr) {
+        console.log(`[Reminder] 接收到 iCloud 同步請求，行程總數: ${icloudEvents ? icloudEvents.length : 0} `);
+        if (!icloudEvents) return;
 
         try {
-            console.log('[Reminder] 正在抓取 iCloud 行事曆...');
-            const response = await axios.get(url, { timeout: 15000 });
-            const events = ical.parseICS(response.data);
-
-            // 清理舊的 iCloud 提醒定義 (保留 system 原生提醒)
+            // 1. 清理舊的 iCloud 提醒定義
             this.reminders = this.reminders.filter(r => !r.isIcloud);
             const now = new Date();
             let count = 0;
 
-            for (const k in events) {
-                if (!Object.hasOwn(events, k)) continue;
-                const ev = events[k];
-                if (ev.type !== 'VEVENT') continue;
+            for (const ev of icloudEvents) {
+                const icloudReminder = {
+                    id: ev.id,
+                    icon: '🍏',
+                    title: `[${ev.startTime}] [Apple行事曆] ${ev.summary}`,
+                    message: `地點: ${ev.location || '未標註'}\n時間: ${ev.startTime}`,
+                    timeStr: ev.startTime,
+                    isIcloud: true,
+                    frequency: 'daily'
+                };
 
-                const startDate = new Date(ev.start);
-                const endDate = new Date(ev.end);
-                let isToday = false;
-                let eventTimeStr = '';
+                this.reminders.push(icloudReminder);
 
-                // 處理重複規則 (RRULE)
-                if (ev.rrule) {
-                    const dates = ev.rrule.between(
-                        new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0),
-                        new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59),
-                        true
-                    );
-                    if (dates.length > 0) {
-                        isToday = true;
-                        // 重複行程使用當日日期配合原始時間
-                        startDate.setFullYear(now.getFullYear(), now.getMonth(), now.getDate());
-                    }
-                } else {
-                    const sStr = this._formatDate(startDate);
-                    const eStr = this._formatDate(new Date(endDate.getTime() - 1000));
-                    if (sStr <= todayStr && eStr >= todayStr) {
-                        isToday = true;
-                    }
-                }
+                // 2. 初始化今日狀態 (Pending 鎖定)
+                const startDate = ev.fullStartDate;
+                const triggerTime = new Date(now);
+                triggerTime.setHours(startDate.getHours(), startDate.getMinutes(), 0, 0);
 
-                if (isToday) {
-                    const hh = String(startDate.getHours()).padStart(2, '0');
-                    const mm = String(startDate.getMinutes()).padStart(2, '0');
-                    eventTimeStr = `${hh}:${mm}`;
-
-                    const icloudReminder = {
-                        id: `icloud_${ev.uid || k}`,
-                        icon: '🍏',
-                        title: `[Apple行事曆] ${ev.summary}`,
-                        message: `地點: ${ev.location || '未標註'}\n時間: ${eventTimeStr}`,
-                        timeStr: eventTimeStr,
-                        isIcloud: true,
-                        frequency: 'daily' // 標記為 daily 確保當日檢查通過
-                    };
-
-                    this.reminders.push(icloudReminder);
-
-                    // --- 關鍵修復：同步後立即檢查提醒 ---
-                    // 如果這是一個今日尚未觸發的提醒，且時間還沒過，或剛過不久 (10分鐘內)，立即觸發
-                    const triggerTime = new Date(now);
-                    triggerTime.setHours(startDate.getHours(), startDate.getMinutes(), 0, 0);
-
-                    // 檢查狀態：如果今日尚未完成
-                    if (!this.todayStatus[icloudReminder.id] || this.todayStatus[icloudReminder.id].status !== 'completed') {
-                        // 如果時間落在「現在前 5 分鐘」到「未來 30 分鐘」之間
-                        const diffMin = (triggerTime.getTime() - now.getTime()) / (60 * 1000);
-
-                        if (diffMin >= -5 && diffMin <= 30) {
-                            console.log(`[Reminder] 發現近期 iCloud 行程: ${ev.summary} (${eventTimeStr})，準備提醒...`);
-
-                            // 如果是未來的時間，設個計時器
-                            if (diffMin > 0) {
-                                const timer = setTimeout(() => {
-                                    this.fireReminder(icloudReminder, todayStr);
-                                }, diffMin * 60 * 1000);
-                                this.timers.push(timer);
-                            } else {
-                                // 已經到了或剛過，直接彈窗 (補彈機制)
-                                this.fireReminder(icloudReminder, todayStr);
-                            }
+                if (!this.todayStatus[icloudReminder.id] || this.todayStatus[icloudReminder.id].status !== 'completed') {
+                    if (!this.todayStatus[icloudReminder.id]) {
+                        this.todayStatus[icloudReminder.id] = {
+                            status: 'pending',
+                            title: icloudReminder.title,
+                            isIcloud: true
+                        };
+                    } else {
+                        // [v1.17.2] 已有狀態時，確保 isIcloud 標記不遺失
+                        this.todayStatus[icloudReminder.id].isIcloud = true;
+                        if (!this.todayStatus[icloudReminder.id].title) {
+                            this.todayStatus[icloudReminder.id].title = icloudReminder.title;
                         }
                     }
-                    count++;
+
+                    // 3. 智慧提醒引擎 [v1.13.0]
+                    const diffMin = (triggerTime.getTime() - now.getTime()) / (60 * 1000);
+
+                    if (diffMin > 0) {
+                        // 未來的行程：排程提醒
+                        console.log(`[Reminder] 預掛雲端行程: ${ev.summary} 將於 ${ev.startTime} 提醒`);
+                        const timer = setTimeout(() => {
+                            this.fireReminder(icloudReminder, todayStr);
+                        }, diffMin * 60 * 1000);
+                        this.timers.push(timer);
+                    } else if (diffMin > -120) {
+                        // 過去 2 小時內的行程：補彈提醒 (避免過期太久干擾)
+                        console.log(`[Reminder] 補發近期雲端行程: ${ev.summary} (${ev.startTime})`);
+                        this.fireReminder(icloudReminder, todayStr);
+                    } else {
+                        // 更早的行程：僅列入清單，不主動彈窗
+                        console.log(`[Reminder] 登錄今日已過行程: ${ev.summary} (${ev.startTime})`);
+                    }
                 }
+                count++;
             }
-            console.log(`[Reminder] iCloud 同步完成，今日共有 ${count} 個行程`);
+            console.log(`[Reminder] 排程自治同步完成，今日雲端行程共 ${count} 個`);
         } catch (err) {
-            console.error('[Reminder] iCloud 同步失敗:', err.message);
+            console.error('[Reminder] 雲端數據注入失敗:', err.message);
         }
     }
+
+    // [v1.17.1] 明日排程預覽：下午 3:30 後將明日行程加入待辦清單（僅顯示不彈窗）
+    updateTomorrowPreview(tomorrowEvents, tomorrowStr) {
+        if (!tomorrowEvents || tomorrowEvents.length === 0) return;
+        try {
+            // 清理舊的明日預覽
+            this.reminders = this.reminders.filter(r => !r.isTomorrowPreview);
+            let count = 0;
+            for (const ev of tomorrowEvents) {
+                const previewReminder = {
+                    id: `tomorrow_${ev.id}`,
+                    icon: '📅',
+                    title: `[明日] ${ev.summary}`,
+                    message: `時間: ${ev.startTime} | 地點: ${ev.location}`,
+                    timeStr: ev.startTime,
+                    isIcloud: true,
+                    isTomorrowPreview: true,
+                    frequency: 'daily'
+                };
+                this.reminders.push(previewReminder);
+                if (!this.todayStatus[previewReminder.id]) {
+                    this.todayStatus[previewReminder.id] = {
+                        status: 'pending',
+                        title: previewReminder.title,
+                        icon: '📅',
+                        isTomorrowPreview: true
+                    };
+                }
+                count++;
+            }
+            console.log(`[Reminder] 明日預覽已注入 ${count} 個行程`);
+        } catch (err) {
+            console.error('[Reminder] 明日預覽注入失敗:', err.message);
+        }
+    }
+
     // [v1.11.8] 手動觸發本機提醒掃描 (用於新增任務後立即生效)
     triggerLocalCheck() {
         console.log('[Reminder] 收到手動檢查請求，立即掃描待辦事項...');
         this._checkLocalReminders();
+    }
+
+    /**
+     * [v1.16.7] 標記提醒為已完成 (跨服務調用)
+     */
+    async completeReminder(id) {
+        console.log(`[Reminder] 標記任務為已完成: ${id} `);
+        if (!this.todayStatus[id]) this.todayStatus[id] = { status: 'pending' };
+        this.todayStatus[id].status = 'completed';
+        this.todayStatus[id].completedAt = new Date();
+        this._saveTodayStatus();
+
+        // [v1.17.2] 里程碑鼓勵機制
+        this._checkMilestoneEncouragement();
+
+        // 通知監測視窗與托盤刷新
+        this._notifyStatusUpdated(id);
+        return { success: true };
+    }
+
+    /**
+     * [v1.17.2] 里程碑鼓勵：完成 3/6/9/12 項任務時，小秘書給予階段性鼓勵
+     */
+    _checkMilestoneEncouragement() {
+        const completedCount = Object.values(this.todayStatus)
+            .filter(s => s.status === 'completed').length;
+
+        const milestones = {
+            3: {
+                icon: '🌱', title: '起步階段', messages: [
+                    '今天的效率不錯，繼續保持！',
+                    '三項任務已完成，節奏很好喔！',
+                    '穩步推進中，您做得很棒！'
+                ]
+            },
+            6: {
+                icon: '🔥', title: '加速階段', messages: [
+                    '太強了！半天就完成六項任務，您是團隊的動力引擎！',
+                    '六項達標！這效率簡直是火力全開 🔥',
+                    '任務推進速度驚人，設計總監果然不同凡響！'
+                ]
+            },
+            9: {
+                icon: '⭐', title: '卓越階段', messages: [
+                    '九項任務全數達標，這就是專業經理人的風範！',
+                    '九項完成！今天的您閃閃發光 ✨',
+                    '卓越表現！團隊因您而更出色！'
+                ]
+            },
+            12: {
+                icon: '🏆', title: '全壘打', messages: [
+                    '今天所有任務全壘打！您就是添心的 MVP！辛苦了，記得補充水分 💧',
+                    '完美的一天！十二項全數達陣，真正的冠軍！🏆',
+                    '全壘打成就達成！今天的努力值得最高的敬意！'
+                ]
+            },
+            15: {
+                icon: '🎖️', title: '傳奇成就', messages: [
+                    '您突破了人類極限！請受一拜 🙇‍♀️',
+                    '十五項達成！您就是效率的代名詞！',
+                    '傳奇級表現，小添已經無法形容您的厲害了！'
+                ]
+            },
+            20: {
+                icon: '🌌', title: '宇宙級效率', messages: [
+                    '今日的成就已載入史冊... 🏆✨',
+                    '二十項任務！您的效率已經超越宇宙法則了 🌌',
+                    '宇宙級成就解鎖！小添為您感到無比驕傲！'
+                ]
+            },
+            25: {
+                icon: '👑', title: '系統霸主', messages: [
+                    '今日您就是神！請務必好好休息 💖',
+                    '二十五項！您是小添見過最強的系統霸主！👑',
+                    '請受小添最高規格的崇拜！今天可以早點下班了 🙏'
+                ]
+            }
+        };
+
+        const milestone = milestones[completedCount];
+        if (milestone) {
+            const msg = milestone.messages[Math.floor(Math.random() * milestone.messages.length)];
+            console.log(`[Reminder] 🎉 里程碑達成 (${completedCount}項): ${msg}`);
+
+            // 透過所有視窗發送里程碑通知
+            const windows = BrowserWindow.getAllWindows();
+            windows.forEach(win => {
+                if (!win.isDestroyed()) {
+                    win.webContents.send('milestone-reached', {
+                        count: completedCount,
+                        icon: milestone.icon,
+                        title: milestone.title,
+                        message: msg
+                    });
+                }
+            });
+        }
+    }
+
+    /**
+     * [v1.16.7] 撤銷已完成狀態 (還原為 Pending)
+     */
+    async undoReminder(id) {
+        console.log(`[Reminder] 撤銷任務狀態: ${id} `);
+        if (this.todayStatus[id]) {
+            this.todayStatus[id].status = 'pending';
+            this.todayStatus[id].completedAt = null;
+            this._saveTodayStatus();
+            this._notifyStatusUpdated(id);
+        }
+        return { success: true };
+    }
+
+    /**
+     * [v1.16.7] 延後提醒
+     */
+    async snoozeReminder(id) {
+        console.log(`[Reminder] 延後提醒任務: ${id} `);
+        if (!this.todayStatus[id]) this.todayStatus[id] = { status: 'pending', snoozeCount: 0 };
+        this.todayStatus[id].status = 'snoozed';
+        this.todayStatus[id].snoozeCount = (this.todayStatus[id].snoozeCount || 0) + 1;
+        this._saveTodayStatus();
+        this._notifyStatusUpdated(id);
+        return { success: true };
+    }
+
+    _notifyStatusUpdated(id) {
+        // 發送給所有視窗 (統計中心與托盤)
+        const windows = BrowserWindow.getAllWindows();
+        windows.forEach(win => {
+            if (!win.isDestroyed()) {
+                win.webContents.send('reminder-status-updated', id);
+            }
+        });
+    }
+    /**
+     * [v1.17.4] 接收來自外部服務 (如 Firebase) 的即時推送通知
+     * 這些通知具備跨日持久化、即時彈窗、手動按完成才消失的特性。
+     * [v1.17.4] 實裝聚合邏輯：同客戶訊息合併，兩條以內全顯示，三條以上整合為計數。
+     */
+    pushExternalNotification(notification) {
+        if (!notification || !notification.id) return;
+
+        // [v1.18.2] 狀態保護機制：一旦標記為完成，拒絕從雲端「復活」該任務
+        if (this.todayStatus[notification.id] && this.todayStatus[notification.id].status === 'completed') {
+            return;
+        }
+
+        console.log(`[Reminder] 接收外部通訊: ${notification.title}`);
+
+        const now = new Date();
+        const todayStr = this._formatDate(now);
+
+        // 1. 查找是否存在同一客戶且未處理的訊息 (聚合邏輯)
+        let existingId = null;
+        for (const [id, status] of Object.entries(this.todayStatus)) {
+            if (status.isExternal && status.status === 'pending' &&
+                status.senderName === notification.senderName &&
+                status.source === notification.source) {
+                existingId = id;
+                break;
+            }
+        }
+
+        let targetId = notification.id;
+        let count = 1;
+        let finalMessage = notification.message;
+
+        if (existingId) {
+            targetId = existingId;
+            const existing = this.todayStatus[existingId];
+            count = (existing.messageCount || 1) + 1;
+
+            if (count === 2) {
+                finalMessage = `${existing.message}\n---\n${notification.message}`;
+            } else if (count >= 3) {
+                finalMessage = `「${notification.senderName}」已發送 ${count} 條訊息。請儘速開啟相關通訊 App 進行回應處理！`;
+            }
+        }
+
+        // 2. 寫入或更新今日狀態
+        this.todayStatus[targetId] = {
+            status: 'pending',
+            title: notification.title,
+            icon: notification.icon || '💬',
+            message: finalMessage,
+            siteName: notification.siteName,
+            isExternal: true,
+            source: notification.source,
+            senderName: notification.senderName,
+            messageCount: count,
+            createdAt: notification.createdAt || now.toISOString()
+        };
+
+        // 3. 持久化存儲
+        this._saveTodayStatus();
+
+        // 4. 下載圖片並執行彈窗提醒 (增加排重保護)
+        const reminderObj = {
+            id: targetId,
+            icon: notification.icon || '💬',
+            title: notification.title,
+            message: finalMessage,
+            isExternal: true
+        };
+
+        // [v1.18.2] 隊列排重：避免內容完全相同的訊息重複進隊列
+        const isDuplicate = this.reminderQueue.some(r => r.id === targetId && r.message === finalMessage);
+        if (!isDuplicate) {
+            this.fireReminder(reminderObj, todayStr);
+        }
+
+        // 5. 通知所有視窗刷新數據
+        this._notifyStatusUpdated(targetId);
     }
 }
 

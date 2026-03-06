@@ -41,7 +41,7 @@
 		"checkedIn": true,
 		"checkinTime": "09:00",
 		"expectedOffTime": "18:00",
-		"remainingMinutes": 264,
+		"remainingMinutes": 304,
 		"checkinCount": 1,
 		"date": "2026-03-06"
 	},
@@ -65,7 +65,7 @@
 		"status": {
 			"checkin_reminder": {
 				"status": "completed",
-				"completedAt": "2026-03-06T05:35:59.229Z"
+				"completedAt": "2026-03-06T04:55:58.499Z"
 			},
 			"site_arrangement": {
 				"status": "completed",

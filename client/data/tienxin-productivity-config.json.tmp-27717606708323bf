@@ -32,7 +32,7 @@
 		"permission": 5
 	},
 	"pcName": null,
-	"lastReportUploadDate": "2026-03-06",
+	"lastReportUploadDate": "2026-03-04",
 	"todayWorkInfo": {
 		"userName": "黃俊豪",
 		"shiftStart": "08:30",
@@ -41,7 +41,7 @@
 		"checkedIn": true,
 		"checkinTime": "09:00",
 		"expectedOffTime": "18:00",
-		"remainingMinutes": 264,
+		"remainingMinutes": 324,
 		"checkinCount": 1,
 		"date": "2026-03-06"
 	},
@@ -65,7 +65,7 @@
 		"status": {
 			"checkin_reminder": {
 				"status": "completed",
-				"completedAt": "2026-03-06T05:35:59.229Z"
+				"completedAt": "2026-03-06T04:25:59.303Z"
 			},
 			"site_arrangement": {
 				"status": "completed",
@@ -150,18 +150,6 @@
 				"senderName": "俊豪",
 				"messageCount": 1,
 				"createdAt": "2026-03-06T04:27:05.208Z"
-			},
-			"firebase_-On0XQSeblCWkpKhCo-6": {
-				"status": "pending",
-				"title": "[LINE] 陳小天",
-				"icon": "💬",
-				"message": "好",
-				"siteName": "一般通訊",
-				"isExternal": true,
-				"source": "line",
-				"senderName": "陳小天",
-				"messageCount": 1,
-				"createdAt": "2026-03-06T05:05:53.641Z"
 			}
 		}
 	},

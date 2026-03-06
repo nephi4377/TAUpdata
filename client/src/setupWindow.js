@@ -5,9 +5,9 @@ const { BrowserWindow, dialog } = require('electron');
 const path = require('path');
 
 class SetupWindow {
-    constructor(configManager, checkinService) {
+    constructor(configManager, apiBridge) {
         this.config = configManager;
-        this.checkinService = checkinService;
+        this.apiBridge = apiBridge;
         this.window = null;
     }
 
@@ -21,7 +21,7 @@ class SetupWindow {
         }
 
         // 取得員工列表
-        const employeeResult = await this.checkinService.getEmployeeList();
+        const employeeResult = await this.apiBridge.getEmployeeList();
         if (!employeeResult.success) {
             dialog.showErrorBox('連線失敗', `無法取得員工列表：\n${employeeResult.message}\n\n請檢查網路連線後重試。`);
             return null;
@@ -68,7 +68,7 @@ class SetupWindow {
                     console.log(`[SetupWindow] 使用者選擇: ${selectedData.userName}`);
 
                     // 綁定到後端
-                    const bindResult = await this.checkinService.bindPcToEmployee(selectedData.userId);
+                    const bindResult = await this.apiBridge.bindPcToEmployee(selectedData.userId);
                     if (bindResult.success) {
                         // 儲存到本地
                         this.config.bindEmployee(selectedData);

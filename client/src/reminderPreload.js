@@ -6,8 +6,12 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('reminderAPI', {
     // 標記提醒為已完成
     complete: (reminderId) => ipcRenderer.invoke('reminder-complete', reminderId),
+    // [v1.14.0] 撤銷已完成狀態
+    undo: (reminderId) => ipcRenderer.invoke('reminder-undo', reminderId),
     // 稍後再提醒
     snooze: (reminderId) => ipcRenderer.invoke('reminder-snooze', reminderId),
+    // 關閉視窗
+    close: () => ipcRenderer.invoke('reminder-close'),
     // 請求刷新統計視窗
     refreshStats: (options) => ipcRenderer.send('refresh-stats', options),
     // 監聽數據更新 (用於消滅閃動的動態 DOM 更新)
@@ -27,5 +31,13 @@ contextBridge.exposeInMainWorld('reminderAPI', {
     // 取得 iCloud 行事曆行程 (用於 UI 顯示)
     getIcloudEvents: () => ipcRenderer.invoke('get-icloud-events'),
     // 桌機直接打卡
-    directCheckin: () => ipcRenderer.invoke('direct-checkin')
+    directCheckin: () => ipcRenderer.invoke('direct-checkin'),
+    // [v1.15.8] 監聽提醒狀態主動更新
+    onReminderStatusUpdated: (callback) => ipcRenderer.on('reminder-status-updated', (event, id) => callback(id)),
+    // [v1.17.4] 監聽小助手對話推送
+    onPushMascotMsg: (callback) => ipcRenderer.on('push-mascot-msg', (event, data) => callback(data)),
+    // [v1.18.0] 測試火警
+    testFireReminder: () => ipcRenderer.invoke('test-reminder-fire'),
+    // [v1.18.4] 監聽里程碑達成
+    onMilestoneReached: (callback) => ipcRenderer.on('milestone-reached', (event, data) => callback(data))
 });

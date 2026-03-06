@@ -15,8 +15,7 @@ class StorageService {
 
     // 初始化資料庫
     async init() {
-        // 動態載入 sql.js
-        const initSqlJs = require('sql.js');
+        const initSqlJs = require('sql.js/dist/sql-asm.js');
         this.SQL = await initSqlJs();
 
         // 資料庫存放路徑：開發模式/Dropbox 執行時使用專案目錄 (Portable)，打包後使用系統 userData
@@ -186,6 +185,33 @@ class StorageService {
         }
     }
 
+    /**
+     * [v1.14.2] 專家級回溯重新分類
+     * 當分類規則或 FFXIV 定義更新後，調用此方法修正今日已記錄之錯誤分類。
+     */
+    async reclassifyTodayData(classifierService) {
+        if (!classifierService) return;
+        const today = this.formatDate(new Date());
+        console.log(`[Storage] 執行今日數據回溯重新分類 (${today})...`);
+
+        try {
+            const results = this.db.exec(`SELECT id, app_name, window_title FROM activities WHERE date = '${today}'`);
+            if (results.length > 0) {
+                const rows = results[0].values;
+                for (const row of rows) {
+                    const [id, appName, windowTitle] = row;
+                    const classification = classifierService.classifyDetailed(appName, windowTitle);
+                    this.db.run(`UPDATE activities SET category = ?, sub_category = ? WHERE id = ?`,
+                        [classification.category, classification.subCategory, id]);
+                }
+                this.saveToFile();
+                console.log(`[Storage] ✅ 今日數據回溯重新分類完成，共修正 ${rows.length} 筆資料。`);
+            }
+        } catch (e) {
+            console.error('[Storage] 回溯分類失敗:', e.message);
+        }
+    }
+
     // 記錄活動
     async recordActivity({ timestamp, appName, windowTitle, durationSeconds, category, subCategory }) {
         const dateStr = this.formatDate(timestamp);
@@ -220,6 +246,16 @@ class StorageService {
     `, [new Date().toISOString()]);
 
         this.scheduleSave();
+    }
+
+    // [v1.15.6] 強制本地 ISO 日期 (YYYY-MM-DD)
+    formatDate(date) {
+        if (!date) date = new Date();
+        const d = new Date(date);
+        const year = d.getFullYear();
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
     }
 
     // 取得今日統計（支援新分類）
@@ -293,7 +329,6 @@ class StorageService {
         return stats;
     }
 
-    // [v1.6] 取得今日累計秒數 (用於重啟時恢復 MonitorService 內存變數)
     async getTodayTotalSeconds() {
         const today = this.formatDate(new Date());
         const results = this.db.exec(`
@@ -757,7 +792,8 @@ class StorageService {
     }
 
     // 取得最近使用的應用程式（前 10 名）
-    async getRecentTopApps(days = 7) {
+    // 取得最近使用的應用程式（預設只取今日，防止溢出）
+    async getRecentTopApps(days = 1) {
         const today = this.formatDate(new Date());
 
         // 如果 days = 1，只取今天
@@ -773,12 +809,12 @@ class StorageService {
       SELECT 
         app_name,
         category,
-        SUM(duration_seconds) as total_seconds
+        MIN(86400, SUM(duration_seconds)) as total_seconds
       FROM activities
-      WHERE ${dateCondition}
-      GROUP BY app_name
+      WHERE date = '${today}'
+      GROUP BY app_name, category
       ORDER BY total_seconds DESC
-      LIMIT 10
+      LIMIT 12
     `);
 
         if (results.length === 0) {

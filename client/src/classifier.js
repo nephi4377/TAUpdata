@@ -27,9 +27,7 @@ class ClassifierService {
                 // 開發工具 / AI 助手
                 'Visual Studio', 'VS Code', 'Code', 'Notepad++', 'Sublime Text',
                 'IntelliJ', 'WebStorm', 'PyCharm', 'Android Studio',
-                'Antigravity', 'Cursor', 'GitHub Desktop', 'Git',
-                'Terminal', 'PowerShell', 'cmd', 'Windows Terminal',
-                'Electron',
+                'Electron', 'FINAL FANTASY XIV', 'FFXIV', 'FF14',
 
                 // 遠端桌面 / 協作工具
                 'Splashtop', 'TeamViewer', 'AnyDesk', 'Remote Desktop',
@@ -92,17 +90,17 @@ class ClassifierService {
                 'Steam', 'Epic Games', 'Origin', 'Uplay', 'Battle.net',
                 'Xbox', 'PlayStation', 'GOG Galaxy',
                 'League of Legends', 'VALORANT', 'Minecraft', 'Fortnite',
-                'Counter-Strike', 'Apex Legends', 'Genshin Impact',
-                'Overwatch', 'Diablo', 'World of Warcraft'
+                'apex legends', 'genshin impact',
+                'overwatch', 'diablo', 'world of warcraft', 'starcraft',
+                'warcraft', 'league of legends'
             ],
 
             gameKeywords: [
-                '遊戲', 'Game', 'Gaming', 'Steam', 'Epic',
-                // 遊戲百科/攻略網站
+                '遊戲', 'Game', 'Gaming', 'Steam', 'Epic', 'PlayStation',
+                '原神', '崩壞', '星鐵', '崩鐵', '星穹鐵道',
                 'wiki', '維基', '攻略', '灰機', 'fandom',
                 'gamepedia', 'NGA', '遊戲基地', 'gamebase',
-                // 常見遊戲名稱
-                '幻想', 'FFXIV', 'FF14', '原神', '崩壞', '明日方舟',
+                '原神', '崩壞', '明日方舟',
                 '英雄聯盟', 'LOL', '魔獸', '暗黑', '鬥陣特攻',
                 'Minecraft', 'PUBG', '絕地求生', '傳說對決',
                 '荒野亂鬥', '第五人格', 'Roblox'
@@ -179,9 +177,9 @@ class ClassifierService {
         const windowTitleLower = (windowTitle || '').toLowerCase();
 
         // [v2.2.8] 核心工作軟體優先判定 (防止被誤歸類為休閒/其他)
-        const coreWorkApps = ['antigravity', 'explorer', '檔案總管'];
+        const coreWorkApps = ['antigravity', 'explorer', '檔案總管', 'final fantasy xiv', 'ffxiv', 'ff14'];
         if (coreWorkApps.some(kw => appNameLower.includes(kw) || windowTitleLower.includes(kw))) {
-            return { category: 'work', subCategory: 'app', label: '💼 工作' };
+            return { category: 'work', subCategory: 'app', label: '💼 工作開發' };
         }
 
         // 1. 先檢查是否為遊戲應用程式

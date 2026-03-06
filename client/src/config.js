@@ -85,6 +85,7 @@ class ConfigManager {
                 // 使用者設定
                 autoStart: true,
                 showNotifications: true,
+                autoOpenBrowser: true,
 
                 // 首次執行標記
                 isFirstRun: true,
@@ -116,7 +117,11 @@ class ConfigManager {
 
                 // [v1.11.10] 秘書性別設定 (female / male)
                 mascotGender: 'female',
-                mascotSkin: 'default'
+                mascotSkin: 'default',
+                lastSkinChangeDate: null,
+
+                // [v1.15.9] 生產力助手：開發測試與自動化驗證控制 (一次性關閉/開啟)
+                debugMode: true
             }
         };
 
@@ -189,6 +194,16 @@ class ConfigManager {
     // 取得所有設定
     getAll() {
         return this.store.store;
+    }
+
+    // 取得自動開啟瀏覽器設定
+    getAutoOpenBrowser() {
+        return this.store.get('autoOpenBrowser');
+    }
+
+    // 設定自動開啟瀏覽器
+    setAutoOpenBrowser(value) {
+        this.store.set('autoOpenBrowser', value);
     }
 
     // 重設為預設值
@@ -399,6 +414,23 @@ class ConfigManager {
     setMascotSkin(skin) {
         this.store.set('mascotSkin', skin);
         console.log(`[Config] 秘書裝束已更換為: ${skin}`);
+    }
+
+    getLastSkinChangeDate() {
+        return this.store.get('lastSkinChangeDate');
+    }
+
+    setLastSkinChangeDate(dateStr) {
+        this.store.set('lastSkinChangeDate', dateStr);
+    }
+
+    getDebugMode() {
+        return this.store.get('debugMode') ?? true;
+    }
+
+    setDebugMode(value) {
+        this.store.set('debugMode', value);
+        console.log(`[Config] Debug Mode 已${value ? '開啟' : '關閉'}`);
     }
 }
 

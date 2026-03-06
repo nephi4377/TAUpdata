@@ -1,0 +1,118 @@
+{
+	"clientId": "4f657864-1397-4bfe-95e6-2e1bc5d27bc1",
+	"apiUrl": null,
+	"apiKey": null,
+	"sampleIntervalSeconds": 30,
+	"reportIntervalMinutes": 60,
+	"classificationRules": {
+		"work": [
+			"AutoCAD",
+			"Visual Studio"
+		],
+		"game": [
+			"Steam"
+		],
+		"leisure": [
+			"YouTube"
+		]
+	},
+	"autoStart": true,
+	"showNotifications": true,
+	"autoOpenBrowser": true,
+	"isFirstRun": true,
+	"lastConfigSync": null,
+	"boundEmployee": {
+		"userId": "Ud58333430513b7527106fa71d2e30151",
+		"userName": "黃俊豪",
+		"shiftStart": "08:30",
+		"shiftEnd": "17:30",
+		"flexibleMinutes": 30,
+		"group": "台南店",
+		"boundAt": "2026-02-21T08:54:26.810Z",
+		"permission": 5
+	},
+	"pcName": null,
+	"lastReportUploadDate": "2026-03-04",
+	"todayWorkInfo": {
+		"userName": "黃俊豪",
+		"shiftStart": "08:30",
+		"shiftEnd": "17:30",
+		"flexibleMinutes": 30,
+		"checkedIn": true,
+		"checkinTime": "14:21",
+		"expectedOffTime": "18:00",
+		"remainingMinutes": 120,
+		"checkinCount": 1
+	},
+	"icloudCalendarUrl": "webcal://p52-caldav.icloud.com/published/2/MTM3ODUzOTcxODEzNzg1MxlJYrZiTNUahbeWTuVjJ4-_4RYG-qsSNnxt1_4QT8h4",
+	"storeLocations": {
+		"台南店": {
+			"lat": 22.983908,
+			"lon": 120.1860286
+		},
+		"高雄店": {
+			"lat": 22.6383363,
+			"lon": 120.3271388
+		}
+	},
+	"mascotGender": "female",
+	"mascotSkin": "sacred",
+	"lastSkinChangeDate": "2026-03-05",
+	"debugMode": true,
+	"reminderDailyState": {
+		"date": "2026 -03 -05 ",
+		"status": {
+			"checkin_reminder": {
+				"status": "pending"
+			},
+			"site_arrangement": {
+				"status": "pending"
+			},
+			"client_msg_1": {
+				"status": "pending"
+			},
+			"site_photo_report": {
+				"status": "pending"
+			},
+			"client_msg_2": {
+				"status": "pending"
+			},
+			"daily_report": {
+				"status": "pending"
+			},
+			"tomorrow_site_arrangement": {
+				"status": "completed",
+				"completedAt": "2026-03-05T09:12:17.043Z"
+			},
+			"open_case_週四": {
+				"status": "pending"
+			},
+			"icloud_29d8c0d4-9f58-45c4-be44-46cfface89cd": {
+				"status": "pending",
+				"title": "[14:00] [Apple行事曆] 討論-Wen楠梓王小姐 -高雄",
+				"isIcloud": true
+			},
+			"icloud_40E73E2D-1698-4E67-9021-6D0804EC3E4D": {
+				"status": "pending",
+				"title": "[10:00] [Apple行事曆] 752陳坤星水電拉線 雯",
+				"isIcloud": true
+			},
+			"tomorrow_icloud_F82122FB-CE2A-4314-90B7-E7D13299776B": {
+				"status": "pending",
+				"title": "[明日] 丈量 西港 王茜茜 雯",
+				"icon": "📅",
+				"isTomorrowPreview": true
+			}
+		}
+	},
+	"reminderHistory": {
+		"site_arrangement": "2026-03-03",
+		"icloud_4AE6690E-753B-4969-9A86-1F12A566FCB1": "2026-03-02",
+		"client_msg_1": "2026-03-03",
+		"site_photo_report": "2026-03-03",
+		"client_msg_2": "2026-03-02",
+		"daily_report": "2026-03-02",
+		"recurring_pending": "2026-03-03",
+		"monday_invoice": "2026-03-03"
+	}
+}
