@@ -1,0 +1,15 @@
+# Build and cache
+client/dist/
+client/.cache/
+client/node_modules/
+
+# Backups and snapshots
+BAK/
+versions/
+temp_updates/
+update_temp/
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
