@@ -1,6 +1,6 @@
 {
     "name": "tienxin-productivity-assistant",
-    "version": "1.18.17",
+    "version": "1.18.18",
     "description": "添心生產力助手 - 智能工作追蹤與提醒系統",
     "main": "main.js",
     "author": "添心室內裝修設計",
@@ -24,6 +24,7 @@
         "electron-store": "^8.1.0",
         "electron-updater": "^6.7.3",
         "firebase": "^12.10.0",
+        "fs-extra": "^11.1.1",
         "node-ical": "^0.25.4",
         "node-schedule": "^2.1.1",
         "sql.js": "^1.9.0",
