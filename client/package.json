@@ -75,15 +75,7 @@
             ],
             "language": "1028",
             "deleteAppDataOnUninstall": false
-        },
-        "publish": [
-            {
-                "provider": "github",
-                "owner": "nephi4377",
-                "repo": "TAUpdata",
-                "releaseType": "release"
-            }
-        ]
+        }
     },
     "scripts": {
         "start": "electron .",
