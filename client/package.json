@@ -1,6 +1,6 @@
 {
     "name": "tienxin-productivity-assistant",
-    "version": "1.18.16",
+    "version": "1.18.17",
     "description": "添心生產力助手 - 智能工作追蹤與提醒系統",
     "main": "main.js",
     "author": "添心室內裝修設計",
@@ -40,6 +40,11 @@
         "files": [
             "**/*",
             "!src/*",
+            "src/hotReloader.js",
+            "src/updater.js",
+            "src/versionManager.js",
+            "src/versionService.js",
+            "src/healthCheck.js",
             "!dist/*",
             "!.cache/*",
             "!*.log",
