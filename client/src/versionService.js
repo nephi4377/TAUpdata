@@ -1,10 +1,10 @@
-// v1.0 - 2026-02-23 15:15 (Asia/Taipei)
-// 修改內容: 建立版本管理服務，統一處理基礎版本與補丁版本的判定，避免主程式硬編碼瑕疵
-
 const { app } = require('electron');
 const path = require('path');
-const fs = require('fs-extra'); // 使用 fs-extra 簡化目錄操作
+const fs = require('fs'); // 回歸原生 fs
 const log = require('electron-log');
+
+// [v1.18.21] 去依賴化對抗性修復：殼層 (Shell) 嚴禁依賴第三方 fs-extra，確保啟動絕對穩定。
+const fsp = fs.promises;
 
 class VersionManager {
     constructor() {
@@ -23,6 +23,34 @@ class VersionManager {
     }
 
     /**
+     * 遞迴複製目錄 (原生 fs 實現)
+     */
+    async _copyDir(src, dest) {
+        await fsp.mkdir(dest, { recursive: true });
+        const entries = await fsp.readdir(src, { withFileTypes: true });
+
+        for (const entry of entries) {
+            const srcPath = path.join(src, entry.name);
+            const destPath = path.join(dest, entry.name);
+
+            if (entry.isDirectory()) {
+                await this._copyDir(srcPath, destPath);
+            } else {
+                await fsp.copyFile(srcPath, destPath);
+            }
+        }
+    }
+
+    /**
+     * 遞迴刪除目錄 (原生 fs 實現)
+     */
+    async _removeDir(dir) {
+        if (fs.existsSync(dir)) {
+            await fsp.rm(dir, { recursive: true, force: true });
+        }
+    }
+
+    /**
      * 備份當前 client 目錄
      */
     async backup() {
@@ -32,7 +60,7 @@ class VersionManager {
 
         try {
             if (fs.existsSync(this.clientPath)) {
-                await fs.copy(this.clientPath, backupDir);
+                await this._copyDir(this.clientPath, backupDir);
                 log.info(`[VersionManager] 備份成功`);
                 return backupDir;
             }
@@ -46,7 +74,6 @@ class VersionManager {
 
     /**
      * 原子化應用更新
-     * @param {string} sourceDir 暫存的新版本目錄
      */
     async applyUpdate(sourceDir) {
         log.info(`[VersionManager] 開始原子化切換目錄...`);
@@ -54,40 +81,50 @@ class VersionManager {
 
         try {
             // 1. 清理舊的臨時備份
-            if (fs.existsSync(oldBackup)) await fs.remove(oldBackup);
+            await this._removeDir(oldBackup);
 
-            // 2. 將當前 client 移至臨時備份 (原子操作第一步)
+            // 2. 將當前 client 移至臨時備份 (原生 rename)
             if (fs.existsSync(this.clientPath)) {
-                await fs.move(this.clientPath, oldBackup);
+                await fsp.rename(this.clientPath, oldBackup);
             }
 
-            // 3. 將新版本移至 client (原子操作第二步)
-            // [v1.17.9] 排除保護檔案，防止更新覆蓋指揮塔
-            const excludedFiles = ['main.js', 'src/hotReloader.js', 'src/versionManager.js', 'src/versionService.js'];
+            // 3. 將新版本移至 client
+            const excludedFiles = ['main.js', 'src/hotReloader.js', 'src/versionService.js'];
 
-            await fs.copy(sourceDir, this.clientPath, {
-                overwrite: true,
-                filter: (src) => {
-                    const relativePath = path.relative(sourceDir, src).replace(/\\/g, '/');
+            // 使用帶 filter 的手動複製
+            const copyWithFilter = async (src, dest, baseSource) => {
+                await fsp.mkdir(dest, { recursive: true });
+                const entries = await fsp.readdir(src, { withFileTypes: true });
+
+                for (const entry of entries) {
+                    const srcPath = path.join(src, entry.name);
+                    const destPath = path.join(dest, entry.name);
+                    const relativePath = path.relative(baseSource, srcPath).replace(/\\/g, '/');
+
                     if (excludedFiles.includes(relativePath)) {
                         log.info(`[VersionManager] 跳過受保護檔案: ${relativePath}`);
-                        return false;
+                        continue;
                     }
-                    return true;
+
+                    if (entry.isDirectory()) {
+                        await copyWithFilter(srcPath, destPath, baseSource);
+                    } else {
+                        await fsp.copyFile(srcPath, destPath);
+                    }
                 }
-            });
+            };
+
+            await copyWithFilter(sourceDir, this.clientPath, sourceDir);
 
             // 4. 清理暫存源目錄
-            await fs.remove(sourceDir);
+            await this._removeDir(sourceDir);
 
             log.info(`[VersionManager] 目錄切換完成`);
-
-            // [v1.17.9] 套用成功後執行孤兒檔案清理
             await this.cleanOldVersions();
         } catch (err) {
             log.error(`[VersionManager] 原子切換失敗，嘗試還原...: ${err.message}`);
             if (fs.existsSync(oldBackup) && !fs.existsSync(this.clientPath)) {
-                await fs.move(oldBackup, this.clientPath);
+                await fsp.rename(oldBackup, this.clientPath);
             }
             throw err;
         }
@@ -106,7 +143,6 @@ class VersionManager {
         }
 
         try {
-            // 模擬啟動環境或執行特定檢查邏輯
             const healthCheck = require(healthCheckPath);
             const result = await healthCheck.run();
             return result === true;
@@ -124,8 +160,8 @@ class VersionManager {
         const oldBackup = path.join(this.versionsPath, 'latest_stable_bak');
 
         if (fs.existsSync(oldBackup)) {
-            await fs.remove(this.clientPath);
-            await fs.move(oldBackup, this.clientPath);
+            await this._removeDir(this.clientPath);
+            await fsp.rename(oldBackup, this.clientPath);
             log.info(`[VersionManager] 已回退至上一個穩定快照`);
             return true;
         }
@@ -135,23 +171,29 @@ class VersionManager {
     }
 
     /**
-     * [v1.17.9] 孤兒檔案清理：僅保留最後 5 個版本備份
+     * 孤兒檔案清理
      */
     async cleanOldVersions() {
         try {
             if (!fs.existsSync(this.versionsPath)) return;
 
-            const dirs = await fs.readdir(this.versionsPath);
-            const versionDirs = dirs
-                .filter(d => d.startsWith('v-'))
-                .map(d => ({ name: d, time: fs.statSync(path.join(this.versionsPath, d)).mtime.getTime() }))
-                .sort((a, b) => b.time - a.time); // 降序排列
+            const dirs = await fsp.readdir(this.versionsPath);
+            const versionDirs = [];
+
+            for (const d of dirs) {
+                if (d.startsWith('v-')) {
+                    const stats = await fsp.stat(path.join(this.versionsPath, d));
+                    versionDirs.push({ name: d, time: stats.mtime.getTime() });
+                }
+            }
+
+            versionDirs.sort((a, b) => b.time - a.time); // 降序排列
 
             if (versionDirs.length > 5) {
                 const toDelete = versionDirs.slice(5);
                 for (const d of toDelete) {
                     log.info(`[VersionManager] 清理舊版本備份: ${d.name}`);
-                    await fs.remove(path.join(this.versionsPath, d.name));
+                    await this._removeDir(path.join(this.versionsPath, d.name));
                 }
             }
         } catch (e) {
@@ -166,7 +208,7 @@ class VersionManager {
         const baseVersion = app.getVersion();
         try {
             if (fs.existsSync(this.patchVersionFile)) {
-                const data = fs.readJsonSync(this.patchVersionFile);
+                const data = JSON.parse(fs.readFileSync(this.patchVersionFile, 'utf8'));
                 const patchVersion = data.version ? data.version.toString() : null;
                 if (patchVersion && this.compareVersions(patchVersion, baseVersion) > 0) {
                     return patchVersion;
@@ -178,14 +220,11 @@ class VersionManager {
         return baseVersion;
     }
 
-    /**
-     * 取得主要包版本 (asar 內的版本)
-     */
     getBaseVersion() {
         try {
             return app.getVersion();
         } catch (e) {
-            return '1.11.33'; // Fallback
+            return '1.18.20';
         }
     }
 

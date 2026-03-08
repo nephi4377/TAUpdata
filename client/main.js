@@ -11,6 +11,7 @@ const path = require('path');
 const fs = require('fs');
 const { hotReloader } = require('./src/hotReloader');
 const { patchUpdater } = require('./src/updater');
+const { versionService } = require('./src/versionService');
 
 // [v1.17.7 Stability] 防死循環機制 --------------------------------------------
 let launchCount = 0;
@@ -60,12 +61,14 @@ app.whenReady().then(async () => {
         }
 
         // [v1.17.6] 引入版本管理與紀錄
-        const versionManager = require('./src/versionManager');
+        const versionManager = versionService;
 
         // 安全載入核心模組
-        const { AppCore } = hotReloader.loadModuleSafely('appCore', './src/appCore');
-        appCore = new AppCore(hotReloader, patchUpdater);
-
+        const coreModule = hotReloader.loadModuleSafely('appCore', './src/appCore');
+        if (!coreModule || !coreModule.AppCore) {
+            throw new Error("無法從本地或補丁載入 AppCore 模組，請檢查安裝完整性。");
+        }
+        appCore = new coreModule.AppCore(hotReloader, patchUpdater);
         // 初始化核心業務
         const success = await appCore.init();
 
@@ -101,7 +104,7 @@ app.whenReady().then(async () => {
 
         // [v1.17.6 核心對抗] 偵測到崩潰，立即嘗試自動回退
         try {
-            const versionManager = require('./src/versionManager');
+            const versionManager = versionService;
 
             // [v1.17.8] 回報雲端
             await versionManager.reportHealthEvent('STARTUP_CRASH', { message: err.message, stack: err.stack });
@@ -120,7 +123,7 @@ app.whenReady().then(async () => {
                 dialog.showErrorBox('致命錯誤', `系統連環崩潰且無法回退：\n${err.message}`);
             }
         } catch (rollbackErr) {
-            dialog.showErrorBox('嚴重錯誤', `啟動失敗且回退系統故障：\n${err.message}`);
+            dialog.showErrorBox('嚴重錯誤', `啟動失敗且自動修復系統故障。\n\n錯誤代碼：BOOT_STRAP_FAILED\n詳情：${err.message}\n\n建議：請至官網下載最新安裝檔重新安裝。`);
         }
         app.quit();
     }
