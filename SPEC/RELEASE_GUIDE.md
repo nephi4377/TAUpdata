@@ -53,4 +53,25 @@
 - [ ] 準備好 Git Tag 命令：`git tag v1.x.x && git push origin v1.x.x`？
 
 ---
+
+## 🚨 5. 關鍵事故教訓 (Lessons Learned)
+
+### 🗂️ A. 打包白名單遺漏案 (2026-03-08)
+- **現象**：安裝後出現「核心災難」視窗，報錯為 `AppCore 初始化失敗` 或 `無法讀取 versionManager`。
+- **原因**：重構時新增/更名了核心模組（如將 `versionManager` 改為 `versionService`），但忘記更新 `package.json` 中的 `build.files` 白名單。安裝檔生成的 EXE 內部缺少該 JS 檔案。
+- **對策**：
+    - 任何位於殼層 (Immutable Shell) 的檔案異動，**必須同時更新 `package.json` 的 `files` 列表**。
+    - 發布前執行診斷腳本，確認所有 `require` 路徑在打包環境下依然有效。
+
+### 🔄 B. Git 鎖定與偽同步案 (2026-03-08)
+- **現象**：GitHub Actions 列表顯示的 Commit 標題與標籤版本對不齊（例如 Tag 是 .27，標題卻是 .24）。
+- **原因**：
+    1. 本地 `.git/index.lock` 被系統進程鎖定，導致 Commit 失敗但 Tag 卻成功推播。
+    2. Tag 指向了錯誤的舊提交 (SHA)。
+- **對策**：
+    - **強行檢查 SHA**：確保 GitHub 上的提交哈希值 (SHA) 與本地最新 Commit 一致。
+    - **跳號策略**：若發布過程中出現標籤混亂，應立即**跳號發布** (例如從 .25 直接跳到 .29) 來徹底區隔乾淨的版本與錯誤的資產。
+    - **順序檢查**：必須先 Push Commit 到遠端並確認顯示正確，再打上對應版本的 Tag。
+
+---
 *此指南由 AI 助理小添彙整，旨在輔助設計總監進行高品質交付。*
