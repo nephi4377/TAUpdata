@@ -29,6 +29,9 @@ class VersionManager {
         if (!fs.existsSync(this.clientPath)) fs.mkdirSync(this.clientPath, { recursive: true });
         if (!fs.existsSync(this.versionsPath)) fs.mkdirSync(this.versionsPath, { recursive: true });
         if (!fs.existsSync(this.tempPath)) fs.mkdirSync(this.tempPath, { recursive: true });
+
+        // [v1.18.34] 自動防禦：啟動時檢查並清理降級的補丁
+        this.enforceBaseVersionPriority();
     }
 
     /**
@@ -236,6 +239,37 @@ class VersionManager {
             log.error('[Version] 讀取補丁版本失敗:', e.message);
         }
         return baseVersion;
+    }
+
+    /**
+     * [v1.18.34] 防禦舊補丁覆蓋新 Base 的問題
+     * 如果 EXE 的版本號 >= 目前已套用的補丁版本號，就強制清理 app_patches 與 patch_version.json
+     */
+    enforceBaseVersionPriority() {
+        try {
+            const baseVersion = this.getBaseVersion();
+            if (fs.existsSync(this.patchVersionFile)) {
+                const data = JSON.parse(fs.readFileSync(this.patchVersionFile, 'utf8'));
+                const patchVersion = data.version ? data.version.toString() : null;
+
+                // 如果 Base >= Patch，代表用戶安裝了新版 EXE，舊補丁已經過期且可能有害
+                if (patchVersion && this.compareVersions(baseVersion, patchVersion) >= 0) {
+                    log.info(`[VersionManager] 偵測到原生 EXE 版本 (v${baseVersion}) >= 補丁版本 (v${patchVersion})，正在清理過期補丁...`);
+
+                    // 同步清理，確保後續 require 絕對不會吃到過期檔案
+                    if (fs.existsSync(this.clientPath)) {
+                        fs.rmSync(this.clientPath, { recursive: true, force: true });
+                        fs.mkdirSync(this.clientPath, { recursive: true }); // 重建空殼給熱更新預備
+                    }
+                    if (fs.existsSync(this.patchVersionFile)) {
+                        fs.unlinkSync(this.patchVersionFile);
+                    }
+                    log.info(`[VersionManager] 舊補丁清理完成，安全交由原生 EXE 執行。`);
+                }
+            }
+        } catch (e) {
+            log.error('[VersionManager] enforceBaseVersionPriority 執行失敗:', e.message);
+        }
     }
 
     getBaseVersion() {
