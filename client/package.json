@@ -1,8 +1,12 @@
 {
     "name": "tienxin-productivity-assistant",
-    "version": "1.18.18",
+    "version": "1.18.24",
     "description": "添心生產力助手 - 智能工作追蹤與提醒系統",
     "main": "main.js",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/nephi4377/TAUpdata.git"
+    },
     "author": "添心室內裝修設計",
     "license": "UNLICENSED",
     "private": true,
@@ -46,6 +50,7 @@
             "src/versionManager.js",
             "src/versionService.js",
             "src/healthCheck.js",
+            "src/appCore.js",
             "!dist/*",
             "!.cache/*",
             "!*.log",
