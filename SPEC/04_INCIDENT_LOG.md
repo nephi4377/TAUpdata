@@ -35,3 +35,12 @@
 - **原子級路徑交換**：新補丁解壓至 temp -> 原子移動 (Rename/Move) 替換 client/。
 - **自動回退**：若 `healthCheck.js` 失敗，自動呼叫 `versionManager.rollback()`。
 - **死循環防禦**：30 秒內啟動超過 3 次即進入維護模式。
+
+### 2026-03-08 | 防禦機制反噬與 Node.js Context 丟失 (v1.18.34 - v1.18.37)
+- **現象**：發布 v1.18.34 後安裝全新 EXE，發生 AppCore 初始化失敗且不斷觸發回退，並陷入「維護模式」。
+- **原因**：
+  1. (主因 1) v1.18.34 導入了 `enforceBaseVersionPriority` 強制清理降級補丁 (包含刪除 `app_patches` 資料夾)。但 `versionManager.validate()` 仍然死定找 `app_patches/src/healthCheck.js` 做健康檢查，找不到便拋出錯誤，觸發 rollback，形成邏輯死結。
+  2. (主因 2) `appCore.js` 在 Node.js 的 `try-catch` 或原生引導時，加載 `versionService.js`。但其內部的 `app.getVersion()` 在尚未完全掛載 Electron 背景 (或部分例外捕捉區塊) 時，`app` 物件會是 `undefined`，拋出 `Cannot read properties of undefined (reading 'getVersion')`。
+- **解決**：
+  - **健康檢查 Fallback**：修改 `versionService.validate()`，若 `app_patches/src/healthCheck.js` 不存在，則自動降級檢查 `this.basePath/src/healthCheck.js` (原廠 EXE 的位置)。
+  - **靜態後備讀取**：全面取代直接調用 `app.getVersion()` 的危險寫法為 `app && app.getVersion ? app.getVersion() : require('../../package.json').version`，杜絕任何 Context 掛載不全導致的崩潰。
