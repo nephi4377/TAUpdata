@@ -156,11 +156,15 @@ class VersionManager {
      */
     async validate() {
         log.info(`[VersionManager] 執行健康檢查...`);
-        const healthCheckPath = path.join(this.clientPath, 'src', 'healthCheck.js');
+        let healthCheckPath = path.join(this.clientPath, 'src', 'healthCheck.js');
 
         if (!fs.existsSync(healthCheckPath)) {
-            log.error(`[VersionManager] 找不到 healthCheck.js`);
-            return false;
+            // [v1.18.37] 如果補丁沒有，就去找原生安裝包裡的 (因為 enforceBaseVersionPriority 會把補丁刪掉)
+            healthCheckPath = path.join(this.basePath, 'src', 'healthCheck.js');
+            if (!fs.existsSync(healthCheckPath)) {
+                log.error(`[VersionManager] 找不到 healthCheck.js (原廠與補丁皆無)`);
+                return false;
+            }
         }
 
         try {
@@ -226,7 +230,11 @@ class VersionManager {
      * 取得當前有效版本號 (相容舊邏輯)
      */
     getEffectiveVersion() {
-        const baseVersion = app.getVersion();
+        let baseVersion = '1.18.36';
+        try {
+            if (app && app.getVersion) baseVersion = app.getVersion();
+            else baseVersion = require('../../package.json').version || '1.18.36';
+        } catch (e) { }
         try {
             if (fs.existsSync(this.patchVersionFile)) {
                 const data = JSON.parse(fs.readFileSync(this.patchVersionFile, 'utf8'));
@@ -274,9 +282,10 @@ class VersionManager {
 
     getBaseVersion() {
         try {
-            return app.getVersion();
+            if (app && app.getVersion) return app.getVersion();
+            return require('../../package.json').version || '1.18.36';
         } catch (e) {
-            return '1.18.20';
+            return '1.18.36';
         }
     }
 

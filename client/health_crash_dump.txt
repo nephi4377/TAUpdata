@@ -1,0 +1,3 @@
+Error: 啟動健康檢查不通過
+    at AppCore.init (D:\Dropbox\CodeBackups\添心生產力助手\client\src\appCore.js:36:38)
+    at async D:\Dropbox\CodeBackups\添心生產力助手\client\main.js:73:25

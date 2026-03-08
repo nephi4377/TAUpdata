@@ -37,6 +37,7 @@ class AppCore {
             console.log('[Core] 核心模組健康檢查通過。');
         } catch (healthErr) {
             console.error('[Core] ⚠️ 健康檢查失敗，準備回退:', healthErr.message);
+            require('fs').writeFileSync('health_crash_dump.txt', healthErr.stack);
             const { versionService } = require('./versionService');
             const versionManager = versionService;
             const success = await versionManager.rollback();
@@ -185,9 +186,8 @@ class AppCore {
             }
             return true;
         } catch (err) {
-            logger.error('[Core] 初始化失敗:', err);
-            dialog.showErrorBox('核心錯誤', `添心生產力助手核心模組載入失敗：\n${err.message} `);
-            return false;
+            require('fs').writeFileSync('crash_dump.txt', err.stack);
+            throw err;
         }
     }
 

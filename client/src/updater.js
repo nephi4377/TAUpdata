@@ -12,7 +12,7 @@ class PatchUpdater {
     constructor() {
         this.repoOwner = 'nephi4377';
         this.repoName = 'TAUpdata';
-        this.userDataPath = app.getPath('userData');
+        this.userDataPath = app ? app.getPath('userData') : path.join(process.cwd(), 'temp_userData');
         this.patchDirPath = path.join(this.userDataPath, 'app_patches');
     }
 
@@ -168,7 +168,7 @@ class PatchUpdater {
             if (isHealthy) {
                 log.info(`[PatchUpdater] 健康檢查通過，正式套用版本 v${latestVersion}`);
                 const patchVersionFile = path.join(this.userDataPath, 'patch_version.json');
-                await fs.writeJson(patchVersionFile, { version: latestVersion });
+                await fs.promises.writeFile(patchVersionFile, JSON.stringify({ version: latestVersion }, null, 2));
 
                 app.emit('patch-downloaded', tempZipPath);
             } else {
