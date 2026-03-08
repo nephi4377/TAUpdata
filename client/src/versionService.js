@@ -8,18 +8,24 @@ const fsp = fs.promises;
 
 class VersionManager {
     constructor() {
-        this.basePath = path.join(process.cwd());
+        // [v1.18.31] 專家級路徑防禦：確保在打包環境與開發環境下路徑一致
+        this.basePath = app ? app.getAppPath() : process.cwd();
         this.clientPath = path.join(this.basePath, 'client');
-        this.versionsPath = path.join(this.basePath, 'versions');
-        this.tempPath = path.join(this.basePath, 'temp_updates');
 
-        // 防禦性檢查：支援非 Electron 環境測試
+        // 暫存與版本路徑必須放在可讀寫的 userData 下
         try {
-            this.userDataPath = app ? app.getPath('userData') : path.join(this.basePath, 'temp_userData');
+            this.userDataPath = app ? app.getPath('userData') : path.join(process.cwd(), 'temp_userData');
         } catch (e) {
-            this.userDataPath = path.join(this.basePath, 'temp_userData');
+            this.userDataPath = path.join(process.cwd(), 'temp_userData');
         }
+
+        this.versionsPath = path.join(this.userDataPath, 'versions');
+        this.tempPath = path.join(this.userDataPath, 'temp_updates');
         this.patchVersionFile = path.join(this.userDataPath, 'patch_version.json');
+
+        // 確保必要目錄存在
+        if (!fs.existsSync(this.versionsPath)) fs.mkdirSync(this.versionsPath, { recursive: true });
+        if (!fs.existsSync(this.tempPath)) fs.mkdirSync(this.tempPath, { recursive: true });
     }
 
     /**

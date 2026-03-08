@@ -5,7 +5,12 @@
 const { app, BrowserWindow, Notification, ipcMain, shell, dialog } = require('electron');
 const path = require('path');
 const logger = require('electron-log');
-const { autoUpdater } = require('electron-updater');
+let autoUpdater;
+try {
+    autoUpdater = require('electron-updater').autoUpdater;
+} catch (e) {
+    logger.warn('[Core] 無法載入 electron-updater (可能在非打包環境):', e.message);
+}
 
 class AppCore {
     constructor(hotReloader, patchUpdater) {
@@ -24,20 +29,23 @@ class AppCore {
     async init() {
         console.log('[Core] 進入 init 階段 (啟動健康檢查)...');
         try {
-            const versionManager = require('./versionManager');
+            const { versionService } = require('./versionService');
+            const versionManager = versionService;
             // [v26.03.01] 專家級啟動保護：健康檢查與自動回退
-            const healthPassed = await versionManager.performHealthCheck();
+            const healthPassed = await versionManager.validate();
             if (!healthPassed) throw new Error('啟動健康檢查不通過');
             console.log('[Core] 核心模組健康檢查通過。');
         } catch (healthErr) {
             console.error('[Core] ⚠️ 健康檢查失敗，準備回退:', healthErr.message);
-            const versionManager = require('./versionManager');
+            const { versionService } = require('./versionService');
+            const versionManager = versionService;
             const success = await versionManager.rollback();
             if (success) {
                 console.log('[Core] 回退成功，系統重新啟動...');
                 app.relaunch();
                 app.exit(0);
             } else {
+                logger.error('[Core] 回退徹底失敗，關閉程式。');
                 dialog.showErrorBox('核心災難', '系統偵測到毀滅性損毀且無法自動回退，請聯繫管理員。');
                 return false;
             }
@@ -126,7 +134,7 @@ class AppCore {
             await this.initializeCheckinIntegration();
 
             this.setupIpcHandlers();
-            this.setupAutoUpdaterListeners();
+            if (autoUpdater) this.setupAutoUpdaterListeners();
 
             // [v1.13.2] 極致自動化：啟動後強制同步
             console.log('[Core] 正在建立啟動首次同步任務 (Delayed 5s)...');
@@ -177,7 +185,7 @@ class AppCore {
             }
             return true;
         } catch (err) {
-            console.error('[Core] 初始化失敗:', err);
+            logger.error('[Core] 初始化失敗:', err);
             dialog.showErrorBox('核心錯誤', `添心生產力助手核心模組載入失敗：\n${err.message} `);
             return false;
         }
@@ -317,7 +325,7 @@ class AppCore {
         this.timers.autoUpdateCheck = setInterval(() => {
             logger.info('[Core] 執行背景定時更新巡檢 (15min)...');
             this.patchUpdater.checkForUpdates(false).then(res => {
-                if (!res && app.isPackaged) autoUpdater.checkForUpdates();
+                if (!res && app.isPackaged && autoUpdater) autoUpdater.checkForUpdates();
             });
         }, 15 * 60 * 1000);
 
@@ -513,6 +521,7 @@ class AppCore {
      * 更新器監聽
      */
     setupAutoUpdaterListeners() {
+        if (!autoUpdater) return;
         autoUpdater.removeAllListeners('update-available');
         autoUpdater.removeAllListeners('update-not-available');
         autoUpdater.removeAllListeners('update-downloaded');
@@ -542,7 +551,7 @@ class AppCore {
         app.on('check-for-updates-manual', async () => {
             this.isManualCheck = true;
             const patched = await this.patchUpdater.checkForUpdates(true);
-            if (!patched && app.isPackaged) autoUpdater.checkForUpdates();
+            if (!patched && app.isPackaged && autoUpdater) autoUpdater.checkForUpdates();
         });
     }
 
