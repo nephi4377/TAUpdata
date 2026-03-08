@@ -10,7 +10,6 @@ class VersionManager {
     constructor() {
         // [v1.18.31] 專家級路徑防禦：確保在打包環境與開發環境下路徑一致
         this.basePath = app ? app.getAppPath() : process.cwd();
-        this.clientPath = path.join(this.basePath, 'client');
 
         // 暫存與版本路徑必須放在可讀寫的 userData 下
         try {
@@ -19,13 +18,26 @@ class VersionManager {
             this.userDataPath = path.join(process.cwd(), 'temp_userData');
         }
 
+        // [v1.18.32] 修正核心災難：將 clientPath 導向可讀寫的 userData/app_patches，與 hotReloader 對齊
+        this.clientPath = path.join(this.userDataPath, 'app_patches');
+
         this.versionsPath = path.join(this.userDataPath, 'versions');
         this.tempPath = path.join(this.userDataPath, 'temp_updates');
         this.patchVersionFile = path.join(this.userDataPath, 'patch_version.json');
 
         // 確保必要目錄存在
+        if (!fs.existsSync(this.clientPath)) fs.mkdirSync(this.clientPath, { recursive: true });
         if (!fs.existsSync(this.versionsPath)) fs.mkdirSync(this.versionsPath, { recursive: true });
         if (!fs.existsSync(this.tempPath)) fs.mkdirSync(this.tempPath, { recursive: true });
+    }
+
+    /**
+     * 回報健康事件 (Stub)
+     * [v1.18.32] 補回此函式，避免 main.js 呼叫時拋出 TypeError 導致二次崩潰
+     */
+    async reportHealthEvent(event, data) {
+        log.warn(`[VersionManager] Health Event: ${event}`, data);
+        // 實作可留空或後續擴充雲端回報邏輯
     }
 
     /**
