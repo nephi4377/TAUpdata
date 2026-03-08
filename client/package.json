@@ -1,6 +1,6 @@
 {
     "name": "tienxin-productivity-assistant",
-    "version": "1.18.24",
+    "version": "1.18.29",
     "description": "添心生產力助手 - 智能工作追蹤與提醒系統",
     "main": "main.js",
     "repository": {
@@ -47,7 +47,6 @@
             "!src/*",
             "src/hotReloader.js",
             "src/updater.js",
-            "src/versionManager.js",
             "src/versionService.js",
             "src/healthCheck.js",
             "src/appCore.js",
