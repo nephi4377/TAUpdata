@@ -9,6 +9,29 @@ const { app, dialog } = require('electron');
 const log = require('electron-log');
 const path = require('path');
 const fs = require('fs');
+
+// [v2.2 Emergency Auto-Clean] -------------------------------------------------
+// 針對 Thin Client 打包環境的自癒機制：若發現運行環境缺少 fs-extra (標配已移除項目)
+// 則強制清理 app_patches 以免載入到引用該模組的舊版補丁導致啟動崩潰。
+try {
+    require.resolve('fs-extra');
+} catch (e) {
+    try {
+        const userData = app.getPath('userData');
+        const patchPath = path.join(userData, 'app_patches');
+        const verPath = path.join(userData, 'patch_version.json');
+        if (fs.existsSync(patchPath)) {
+            // 使用原生 fs 同步刪除防止後續 require 命中舊補丁
+            fs.rmSync(patchPath, { recursive: true, force: true });
+            if (fs.existsSync(verPath)) fs.unlinkSync(verPath);
+            log.warn('[Emergency] 偵測到環境缺少 fs-extra，已自動清理衝突補丁。');
+        }
+    } catch (err) {
+        log.error('[Emergency] 清理補丁失敗:', err.message);
+    }
+}
+// -----------------------------------------------------------------------------
+
 const { hotReloader } = require('./src/hotReloader');
 const { patchUpdater } = require('./src/updater');
 const { versionService } = require('./src/versionService');

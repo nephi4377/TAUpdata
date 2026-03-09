@@ -32,17 +32,17 @@
 		"permission": 5
 	},
 	"pcName": null,
-	"lastReportUploadDate": "2026-03-08",
+	"lastReportUploadDate": "2026-03-06",
 	"todayWorkInfo": {
 		"userName": "黃俊豪",
 		"shiftStart": "08:30",
 		"shiftEnd": "17:30",
 		"flexibleMinutes": 30,
-		"checkedIn": true,
-		"checkinTime": "17:55",
-		"expectedOffTime": "18:00",
-		"remainingMinutes": 0,
-		"checkinCount": 1,
+		"checkedIn": false,
+		"checkinTime": null,
+		"expectedOffTime": null,
+		"remainingMinutes": null,
+		"checkinCount": 0,
 		"date": "2026-03-08"
 	},
 	"icloudCalendarUrl": "webcal://p52-caldav.icloud.com/published/2/MTM3ODUzOTcxODEzNzg1MxlJYrZiTNUahbeWTuVjJ4-_4RYG-qsSNnxt1_4QT8h4",
@@ -64,8 +64,7 @@
 		"date": "2026-03-08",
 		"status": {
 			"checkin_reminder": {
-				"status": "completed",
-				"completedAt": "2026-03-08T12:59:21.144Z"
+				"status": "pending"
 			},
 			"site_arrangement": {
 				"status": "pending"
@@ -85,6 +84,18 @@
 			"tomorrow_site_arrangement": {
 				"status": "pending"
 			},
+			"firebase_-OnBDz5BLq1qb4ktVBJY": {
+				"status": "pending",
+				"title": "[LINE] 吳秀美（小美）",
+				"icon": "💬",
+				"message": "早上10:30可？\n---\n那我記下行事曆",
+				"siteName": "案號 #726",
+				"isExternal": true,
+				"source": "line",
+				"senderName": "吳秀美（小美）",
+				"messageCount": 2,
+				"createdAt": "2026-03-08T06:57:54.151Z"
+			},
 			"icloud_4AB550F2-D1E3-4693-9000-F330B009BDC9": {
 				"status": "pending",
 				"title": "[15:30] [Apple行事曆] 看圖 764楊 台南 雯",
@@ -101,59 +112,17 @@
 				"title": "[13:00] [Apple行事曆] 簽約 769尹 雯/JC",
 				"isIcloud": true
 			},
-			"firebase_-OnBmiyVEbJpSMmFmOu0": {
+			"firebase_-OnBL2Gmcjd4liLtsU2u": {
 				"status": "pending",
-				"title": "[LINE] 黃鈺茗 Ming",
+				"title": "[LINE] 佛劍文豪",
 				"icon": "💬",
-				"message": "「黃鈺茗 Ming」已發送 3 條訊息。請儘速開啟相關通訊 App 進行回應處理！",
-				"siteName": "一般通訊",
+				"message": "阿則，不好意思！\n32項黑色易利勾取消，我先沿用建商附的，謝謝！",
+				"siteName": "案號 #734",
 				"isExternal": true,
 				"source": "line",
-				"senderName": "黃鈺茗 Ming",
-				"messageCount": 3,
-				"createdAt": "2026-03-08T09:46:37.477Z"
-			},
-			"firebase_-OnBo6y_PWi0QOYN2d6c": {
-				"status": "pending",
-				"title": "[LINE] AMBER",
-				"icon": "💬",
-				"message": "確定一下，我們的梯子預計收納的地方在哪？\n---\n鋁梯+掃地機器人放的下嗎",
-				"siteName": "案號 #164",
-				"isExternal": true,
-				"source": "line",
-				"senderName": "AMBER",
-				"messageCount": 2,
-				"createdAt": "2026-03-08T10:43:40.056Z"
-			},
-			"tomorrow_icloud_6AD87620-3F54-41D2-9C9F-8771082D71FD": {
-				"status": "pending",
-				"title": "[明日] 看圖 770茄萣 雯",
-				"icon": "📅",
-				"isTomorrowPreview": true
-			},
-			"tomorrow_icloud_A6F14C98-3D4B-4D45-A14D-06C1386ABB89": {
-				"status": "pending",
-				"title": "[明日] 752拿龍頭反耳",
-				"icon": "📅",
-				"isTomorrowPreview": true
-			},
-			"tomorrow_icloud_AAD066C7-387D-4406-A51C-CF978771F68D": {
-				"status": "pending",
-				"title": "[明日] 742 陳又嘉木工進 雯",
-				"icon": "📅",
-				"isTomorrowPreview": true
-			},
-			"firebase_-OnBzHV9CFfJWKw_9n8e": {
-				"status": "pending",
-				"title": "[LINE] Yang Miamia",
-				"icon": "💬",
-				"message": "五尺鋁梯\n---\n到時候復量再決定那一格的寬度可以嗎",
-				"siteName": "案號 #164",
-				"isExternal": true,
-				"source": "line",
-				"senderName": "Yang Miamia",
-				"messageCount": 2,
-				"createdAt": "2026-03-08T10:49:16.803Z"
+				"senderName": "佛劍文豪",
+				"messageCount": 1,
+				"createdAt": "2026-03-08T07:27:38.195Z"
 			}
 		}
 	},
