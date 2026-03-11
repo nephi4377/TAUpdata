@@ -78,6 +78,14 @@
 | **Google Apps Script** | API 伺服器與 Sheet 邏輯 |
 | **Firebase RTDB** | WebSocket 即時訊息推送 (asia-southeast1) |
 
+### 3. 取樣與統計 (15s 取樣、三階加總、樂觀累加)
+- **核心三階段定義**：
+    1. **擷取 (Extraction)**：15s 取樣前景視窗 (`active-win`)，獲取 App 與標題。
+    2. **計時 (Timing)**：每次擷取成功即視為活躍 15s，累積至資料庫 `duration_seconds`。
+    3. **分類 (Classification)**：顯示時調用 `classifier.js` 將數值歸入 `work/leisure/other` 圓圈。
+- **Spike Protection**：取樣間隔若 > 60s (如休眠喚醒)，該次 duration 強制校準為 **15s**。
+- **數據牆**：所有統計查詢執行 **720 分鐘/12h 物理封頂**，防止異常數據溢出。
+
 ### 2. 通訊方案對比 (Decision History)
 - **方案 A (輪詢 Polling)**：每 3 分鐘抓取一次。缺點是 API 開銷高 (10台電腦 = 4800次/天)，延遲大。
 - **方案 B (Firebase 即時推送 ✅)**：採用 WebSocket 監聽。延遲 < 1s，API 開銷極低。這是目前系統選擇的最終方案。
@@ -118,6 +126,16 @@
 - **v1.7.4**：熱更新補丁機制初步成型。
 - **v1.13.0**：統計視窗渲染權威歸口至 Monitor。
 - **v1.18.6**：正式實施 **Thin Client** 資源分離架構。
+
+---
+
+## 🔬 核心功能技術定義 (Core Tech Definitions)
+
+### 1. 生產力統計三階段模型 (The 3-Stage Model)
+為了確保診斷的一致性，將生產力統計功能定義如下：
+1. **視窗擷取 (Extraction)**：每 15s 探測一次最前方視窗。若此處故障，排行榜將為空。
+2. **硬性計時 (Hard-Timing)**：擷取成功即記錄 15s。排行有數據代表此階段運作正常。
+3. **分類彙總 (Classification)**：將資料庫紀錄依規則對應至 UI 圓圈。若排行有資料但圓圈為 0，代表此分類階段邏輯失效 (通常為大小寫不匹配或規則未涵蓋)。
 
 ---
 *本文件由 AI 助理根據《添心小助手計劃書》整理，妥善保存所有「軟性指標」與「研發構思」。*

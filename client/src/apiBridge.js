@@ -19,6 +19,8 @@ class ApiBridge {
         this.monitorService = null;
         this.apiUrl = configManager.getCheckinApiUrl();
         this.pcName = configManager.getPcName();
+        this.employeeNames = new Set(); // [v2.2.8.3] 姓名快取
+        this.employeeUids = new Set();  // [v2.2.8.5] UID 快取 (精確過濾)
         console.log(`[ApiBridge] 初始化完成，通訊出口已收口於此。電腦名稱: ${this.pcName}`);
 
         this.logPath = path.join(app.getPath('userData'), 'api_bridge_debug.log');
@@ -116,10 +118,29 @@ class ApiBridge {
 
     // 取得在職員工列表
     async getEmployeeList() {
-        return await this.get({
+        const result = await this.get({
             action: 'get_employees',
             filter: 'active'
         });
+        
+        // [v2.2.8.5] 同步更新本地名稱與 UID 快取
+        if (result && result.success && Array.isArray(result.data)) {
+            this.employeeNames.clear();
+            this.employeeUids.clear();
+            result.data.forEach(emp => {
+                if (emp.userName) this.employeeNames.add(emp.userName);
+                if (emp.userId) this.employeeUids.add(emp.userId);
+            });
+            console.log(`[ApiBridge] 員工快取同步成功: ${this.employeeNames.size} 名稱 / ${this.employeeUids.size} UID`);
+        }
+        return result;
+    }
+
+    // [v2.2.8.5] 判斷是否為內部員工 (雙重校驗：姓名 或 UID)
+    isEmployee(name, uid) {
+        if (uid && this.employeeUids.has(uid)) return true;
+        if (name && this.employeeNames.has(name)) return true;
+        return false;
     }
 
     // 用電腦名稱查詢已綁定的員工
@@ -305,6 +326,9 @@ class ApiBridge {
         const isFirstRun = this.config.isFirstRun();
 
         if (localBound) {
+            // [v2.2.8.3] 啟動時順便抓取一次員工名單 (背景執行)
+            this.getEmployeeList().catch(() => {});
+
             const workInfoResult = await this.getWorkInfo(localBound.userId);
             if (workInfoResult.success) {
                 this.config.setTodayWorkInfo(workInfoResult.data);

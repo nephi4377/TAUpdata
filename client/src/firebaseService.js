@@ -17,6 +17,11 @@ class FirebaseService {
         this.db = null;
         this.activeUserId = null;
         this.activeRef = null;
+        this.messageBuffer = new Map(); // [v2.2.8.6] 訊息整合緩衝 (Anti-Spam)
+        
+        // [v2.2.8.7] 訊息持久化去重 (Deduplication)
+        this.processedMessages = new Set(this.config.get('processedMessageIds') || []);
+        this.contentFingerprints = new Set(); // 內存內容指紋 (防止 Webhook 重試)
 
         // 總監提供的 Firebase 配置
         this.firebaseConfig = {
@@ -98,40 +103,109 @@ class FirebaseService {
         if (this.processedMessages.has(msgId)) return; // 內存重複過濾
 
         console.log(`[Firebase] 收到新訊息 [${msgId}]:`, data.message);
+        
+        // [v2.2.8.7] 雙重去重：ID 持久化比對 + 內容指紋比對
+        const senderUid = data.senderUid || data.senderId || data.userId;
+        const fingerprint = `${senderUid}:${data.message}`;
+
+        if (this.processedMessages.has(msgId) || this.contentFingerprints.has(fingerprint)) {
+            console.log(`[Firebase] ♻️ 跳過重複訊息 (ID 或內容已處理): ${msgId}`);
+            this.removeMessage(msgId).catch(() => {});
+            return;
+        }
+
+        // [v2.2.8.6] 訊息智慧整合 (Batching)
         this.processedMessages.add(msgId);
+        this.contentFingerprints.add(fingerprint);
+        
+        // 持久化保存 ID (限制最近 100 筆)
+        const idList = Array.from(this.processedMessages).slice(-100);
+        this.config.set('processedMessageIds', idList);
+        
+        // 分流：若為員工則直接清理並略過提醒
+        const apiBridge = this.reminderService.apiBridge;
+        if (apiBridge && apiBridge.isEmployee(data.senderName, senderUid)) {
+            console.log(`[Firebase] 🔇 靜默過濾內部員工訊息: ${data.senderName} (${senderUid || 'no-uid'})`);
+            this.removeMessage(msgId).catch(() => {});
+            return;
+        }
 
-        if (!this.reminderService) return;
+        // 若非員工，進入緩衝池
+        this._bufferMessage(senderUid, data, msgId);
+    }
 
-        // 轉換為 Reminder 格式
+    /**
+     * 將訊息放入緩衝，2秒內同發送者合併
+     */
+    _bufferMessage(senderUid, data, msgId) {
+        const key = senderUid || data.senderName;
+        let buffer = this.messageBuffer.get(key);
+
+        if (!buffer) {
+            buffer = {
+                senderName: data.senderName,
+                senderUid: senderUid,
+                source: data.source || 'line',
+                messages: [],
+                msgIds: [],
+                timer: null
+            };
+            this.messageBuffer.set(key, buffer);
+        }
+
+        // 加入新內容
+        buffer.messages.push(data.message);
+        buffer.msgIds.push(msgId);
+
+        // 重設計時器 (每次新訊息進來延展 2秒)
+        if (buffer.timer) clearTimeout(buffer.timer);
+        
+        buffer.timer = setTimeout(() => {
+            this._flushBuffer(key);
+        }, 2000);
+    }
+
+    /**
+     * 沖刷緩衝並送出提醒
+     */
+    async _flushBuffer(key) {
+        const buffer = this.messageBuffer.get(key);
+        if (!buffer) return;
+
+        // 合併訊息文字 (用 | 分隔)
+        const combinedMessage = buffer.messages.join(' | ');
+        
+        // 1. 轉換為 Reminder 格式 (用於清單與歷史)
         const notification = {
-            id: `firebase_${msgId}`,
-            source: data.source,
-            senderName: data.senderName,
-            title: `[${data.source.toUpperCase()}] ${data.senderName}`,
-            message: data.message,
-            icon: data.source === 'line' ? '💬' : '🔵',
+            id: `firebase_batch_${Date.now()}`,
+            source: buffer.source,
+            senderName: buffer.senderName,
+            title: `[${buffer.source.toUpperCase()}] ${buffer.senderName}`,
+            message: combinedMessage,
+            icon: buffer.source === 'line' ? '💬' : '🔵',
             isExternal: true,
-            siteName: data.siteName || '系統通知',
-            createdAt: new Date(data.timestamp || Date.now()).toISOString()
+            siteName: '即時通知整合',
+            createdAt: new Date().toISOString()
         };
 
         // 呼叫提醒服務進行推播與持久化
         this.reminderService.pushExternalNotification(notification);
 
-        // [v1.17.4] 同步推送到小助手對話氣泡 (秘書報告)
-        const mascotText = `秘書報告：LINE「${data.senderName}」傳來訊息：${data.message}`;
+        // 2. 同步推送到小助手對話氣泡 (秘書報告) - 僅發送一次整合成員
+        const mascotText = `秘書報告：${buffer.source.toUpperCase()}「${buffer.senderName}」傳來 ${buffer.messages.length} 則訊息：${combinedMessage}`;
         if (this.monitorService && this.monitorService.statsWindow && !this.monitorService.statsWindow.isDestroyed()) {
             this.monitorService.statsWindow.webContents.send('push-mascot-msg', { text: mascotText, priority: 1 });
         }
 
-        // [v1.18.1] 重要：閉環同步 - 成功接收後立即移除 Firebase 上的資料
-        try {
-            const msgRef = ref(this.db, `notifications/${this.activeUserId}/${msgId}`);
-            await remove(msgRef);
-            console.log(`[Firebase] 已成功清理雲端訊息節點 [${msgId}]`);
-        } catch (err) {
-            console.error(`[Firebase] 清理訊息失敗 [${msgId}]:`, err.message);
+        console.log(`[Firebase] 📦 已送出合併提醒 (${buffer.messages.length} 筆): ${buffer.senderName}`);
+
+        // 從 Firebase 批次物理移除
+        for (const mid of buffer.msgIds) {
+            this.removeMessage(mid).catch(() => {});
         }
+
+        // 清除緩衝
+        this.messageBuffer.delete(key);
     }
 
     /**

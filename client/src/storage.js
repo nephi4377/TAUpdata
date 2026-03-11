@@ -320,8 +320,10 @@ class StorageService {
         // 有效工時 = 工作 (Work) + 其他 (Other)
         // 總活躍時間 = 工作 + 其他 + 休閒 (完全排除閒置與午休)
         // 生產力分數 = 有效工時 / 總活躍時間
+        // [v2.2.8.4] @STABLE 生產力分數 = (工作 + 其他) / (工作 + 其他 + 休閒)
+        // [v2.2.8.4] @STABLE 生產力分數 = (工作 + 其他) / (工作 + 其他 + 休閒)
         const workEfficient = stats.work + stats.other;
-        const activeBase = workEfficient + stats.leisure + stats.music; // 音樂視為背景，通常歸入活躍或工作，此處併入基數
+        const activeBase = workEfficient + stats.leisure;
         stats.productivityRate = activeBase > 0
             ? Math.round((workEfficient / activeBase) * 100)
             : 0;
@@ -421,8 +423,9 @@ class StorageService {
         }
 
         // [v2.2.8] 生產力指數公式校正 (歷史資料亦同步公式)
+        // [v2.2.8.4] @STABLE 生產力指數公式校正
         const workEfficient = stats.work + stats.other;
-        const activeBase = workEfficient + stats.leisure + stats.music;
+        const activeBase = workEfficient + stats.leisure;
         stats.productivityRate = activeBase > 0
             ? Math.round((workEfficient / activeBase) * 100)
             : 0;

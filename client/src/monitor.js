@@ -139,9 +139,9 @@ class MonitorService {
             this.lastRestoredDate = today;
 
             const stats = await this.storageService.getTodayTotalSeconds();
-            const MAX_SECONDS = 86400; // 封閉上限 24h
+            const MAX_SECONDS = 43200; // 封閉上限 12h (對應 720 分鐘)
 
-            // [v26.03.04 Fix] 正確恢復各分類秒數（修復 work+other 灌水問題）
+            // [v26.03.04 Fix] 正確恢復各分類秒數（包含 Other，解決 0 分問題）
             this.currentWorkSeconds = Math.min(stats.work || 0, MAX_SECONDS);
             this.currentLeisureSeconds = Math.min(stats.leisure || 0, MAX_SECONDS);
             this.currentOtherSeconds = Math.min(stats.other || 0, MAX_SECONDS);
@@ -166,16 +166,14 @@ class MonitorService {
         if (stats.other > (this.currentOtherSeconds || 0)) this.currentOtherSeconds = stats.other;
     }
 
-    // 重設休閒追蹤
+    // 重設休閒追蹤 (僅重設警示狀態，不歸零今日總計)
     resetLeisureTracking() {
-        this.currentLeisureSeconds = 0;
         this.currentLeisureApp = null;
         this.leisureAlertShown = false;
     }
 
-    // 重設工作追蹤
+    // 重設工作追蹤 (僅重設警示狀態，不歸零今日總計)
     resetWorkTracking() {
-        this.currentWorkSeconds = 0;
         // 重設所有工作警示狀態
         this.workAlertLevels.forEach(level => level.shown = false);
     }
@@ -367,7 +365,7 @@ class MonitorService {
 
     // 檢查休閒警示
     checkLeisureAlert(appName, windowTitle, durationSeconds) {
-        this.currentLeisureSeconds += durationSeconds;
+        // [v26.03.01 Fix] 移除此處重複累加，sample() 已處理過 currentLeisureSeconds
         this.currentLeisureApp = appName;
 
         let displayName = windowTitle || appName;
@@ -752,22 +750,23 @@ class MonitorService {
 
         const dbStats = await this.storageService.getTodayStats();
 
-        // [v1.16.9] 數據牆封頂：所有分類與排行數值強制截斷至 1440 分鐘
-        const limit1440 = (m) => Math.min(Math.max(0, m || 0), 1440);
+        // [v1.16.9] 數據牆封頂：所有分類與排行數值強制截斷至 720 分鐘 (對齊規約 05_IDEAS_AND_BRAINSTORM)
+        const limitWall = (m) => Math.min(Math.max(0, m || 0), 720);
 
         // [v26.03.04 Fix] 使用內存累加值為主，DB 為輔：解決 DB 15 秒延遲寫入導致前端數據停滯
         const memWork = Math.round((this.currentWorkSeconds || 0) / 60);
         const memLeisure = Math.round((this.currentLeisureSeconds || 0) / 60);
         const memOther = Math.round((this.currentOtherSeconds || 0) / 60);
 
-        const finalWork = limit1440(Math.max(dbStats.work, memWork));
-        const finalLeisure = limit1440(Math.max(dbStats.leisure, memLeisure));
-        const finalOther = limit1440(Math.max(dbStats.other, memOther));
-        const finalIdle = limit1440(dbStats.idle);
+        const finalWork = limitWall(Math.max(dbStats.work, memWork));
+        const finalLeisure = limitWall(Math.max(dbStats.leisure, memLeisure));
+        const finalOther = limitWall(Math.max(dbStats.other, memOther));
+        const finalIdle = limitWall(dbStats.idle);
 
-        const totalActive = finalWork + finalLeisure + finalOther;
-        const sumAll = totalActive + finalIdle;
-        const productivityRate = sumAll > 0 ? Math.round((finalWork / sumAll) * 100) : 0;
+        // [v2.2.8.4] @STABLE 生產力指數公式：(工作 + 其他) / (工作 + 休閒 + 其他)
+        const totalEffective = finalWork + finalOther;
+        const activeTotal = totalEffective + finalLeisure;
+        const productivityRate = activeTotal > 0 ? Math.round((totalEffective / activeTotal) * 100) : 0;
 
         const workInfo = cfg.getTodayWorkInfo();
         if (workInfo && workInfo.checkedIn && workInfo.checkinTime && (!workInfo.expectedOffTime || workInfo.expectedOffTime === '--:--')) {

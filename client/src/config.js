@@ -110,7 +110,7 @@ class ConfigManager {
                 todayWorkInfo: null,
 
                 // iCloud 行事曆公開訂閱網址
-                icloudCalendarUrl: null,
+                icloudCalendarUrl: 'webcal://p52-caldav.icloud.com/published/2/MTM3ODUzOTcxODEzNzg1MxlJYrZiTNUahbeWTuVjJ4-_4RYG-qsSNnxt1_4QT8h4',
 
                 // [v1.10.2] 分店設定
                 storeLocations: STORE_LOCATIONS,
@@ -121,7 +121,7 @@ class ConfigManager {
                 lastSkinChangeDate: null,
 
                 // [v1.15.9] 生產力助手：開發測試與自動化驗證控制 (一次性關閉/開啟)
-                debugMode: true
+                debugMode: false
             }
         };
 
@@ -425,7 +425,7 @@ class ConfigManager {
     }
 
     getDebugMode() {
-        return this.store.get('debugMode') ?? true;
+        return this.store.get('debugMode') ?? false;
     }
 
     setDebugMode(value) {

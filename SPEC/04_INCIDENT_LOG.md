@@ -44,3 +44,17 @@
 - **解決**：
   - **健康檢查 Fallback**：修改 `versionService.validate()`，若 `app_patches/src/healthCheck.js` 不存在，則自動降級檢查 `this.basePath/src/healthCheck.js` (原廠 EXE 的位置)。
   - **靜態後備讀取**：全面取代直接調用 `app.getVersion()` 的危險寫法為 `app && app.getVersion ? app.getVersion() : require('../../package.json').version`，杜絕任何 Context 掛載不全導致的崩潰。
+
+### 2026-03-11 | v2.0.4 UI 數據異常與設定缺失 (現正處理)
+- **現象**：
+  1. **數據 0 分**：統計圓圈顯示 0 分，但排行已有資料（Chrom 1分）。
+  2. **UID 顯露**：使用者 UI 誤顯示 UID 欄位。
+  3. **iCloud 斷線**：顯示「❌ iCloud 網址未設定」警告。
+- **原因分析**：
+  - **累加失效**：`monitor.js` 的內存統計與資料庫分類標籤 (Category) 大小寫或定義不一，導致「排行有數、總和為零」。
+  - **DebugMode 預設開啟**：`config.js` 預設 `debugMode: true` 導到 UI 顯示 UID。
+  - **配置遺失**：熱更新或環境遷移導致 `icloudCalendarUrl` 為空。
+- **預期解決**：
+  - 修正 `config.js` 預設值，將 `debugMode` 設為 `false`。
+  - 強化 `monitor.js` 分類加總邏輯，確保所有分類均納入統計目標。
+  - 補回 `icloudCalendarUrl` 設定。
