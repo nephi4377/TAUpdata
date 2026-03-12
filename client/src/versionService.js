@@ -24,6 +24,7 @@ class VersionManager {
         this.versionsPath = path.join(this.userDataPath, 'versions');
         this.tempPath = path.join(this.userDataPath, 'temp_updates');
         this.patchVersionFile = path.join(this.userDataPath, 'patch_version.json');
+        this.failedVersionsFile = path.join(this.userDataPath, 'failed_versions.json');
 
         // 確保必要目錄存在
         if (!fs.existsSync(this.clientPath)) fs.mkdirSync(this.clientPath, { recursive: true });
@@ -304,6 +305,38 @@ class VersionManager {
             if (p1 < p2) return -1;
         }
         return 0;
+    }
+
+    /**
+     * [v2.0.8] 紀錄更新失敗的版本，避免無限循環
+     */
+    async recordFailedVersion(version) {
+        try {
+            let failed = [];
+            if (fs.existsSync(this.failedVersionsFile)) {
+                failed = JSON.parse(fs.readFileSync(this.failedVersionsFile, 'utf8'));
+            }
+            if (!failed.includes(version)) {
+                failed.push(version);
+                await fs.promises.writeFile(this.failedVersionsFile, JSON.stringify(failed, null, 2));
+                log.warn(`[VersionManager] 已紀錄失敗版本: ${version}`);
+            }
+        } catch (e) {
+            log.error(`[VersionManager] 錄製失敗版本異常: ${e.message}`);
+        }
+    }
+
+    /**
+     * [v2.0.8] 檢查版本是否已列入黑名單
+     */
+    isVersionFailed(version) {
+        try {
+            if (fs.existsSync(this.failedVersionsFile)) {
+                const failed = JSON.parse(fs.readFileSync(this.failedVersionsFile, 'utf8'));
+                return failed.includes(version);
+            }
+        } catch (e) { }
+        return false;
     }
 }
 

@@ -2,7 +2,6 @@ const { Notification, dialog, powerMonitor, BrowserWindow, screen, app, ipcMain 
 const path = require('path');
 const fs = require('fs');
 const https = require('https');
-const { versionService } = require('./versionService');
 
 // 動態載入 active-win（ESM 模組）
 let activeWin = null;
@@ -777,8 +776,17 @@ class MonitorService {
             } catch (e) { }
         }
 
+        let effectiveVersionStr = 'Unknown';
+        try {
+            // [v2.0.11] 防禦性載入 versionService，因為它已經被移至 app.asar
+            const vSvc = require('./versionService').versionService || require('../src/versionService').versionService || require(path.join(process.cwd(), 'resources/app.asar/src/versionService')).versionService;
+             if(vSvc) effectiveVersionStr = vSvc.getEffectiveVersion();
+        } catch(e) {
+             console.warn('[Monitor] 此環境無法獲取版號:', e.message);
+        }
+
         return {
-            version: versionService.getEffectiveVersion(),
+            version: effectiveVersionStr,
             debugMode: cfg.getDebugMode(),
             workTime: this.formatMinutes(finalWork),
             leisureTime: this.formatMinutes(finalLeisure),

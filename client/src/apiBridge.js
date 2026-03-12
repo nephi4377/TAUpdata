@@ -1,9 +1,26 @@
 const os = require('os');
-const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
 const { app } = require('electron');
-const ical = require('node-ical');
+
+// [v2.0.12] 深度防禦性載入：確保在 patches 目錄下也能正確載入母體的依賴
+function safeRequire(moduleName) {
+    try {
+        const m = require(moduleName);
+        return m;
+    } catch (e) {
+        try {
+            const mPath = require.resolve(moduleName, { paths: [process.cwd(), __dirname, path.join(process.cwd(), 'resources/app.asar/node_modules')] });
+            return require(mPath);
+        } catch (e2) {
+            console.warn(`[ApiBridge] 無法載入模組 ${moduleName}:`, e2.message);
+            return null;
+        }
+    }
+}
+
+const axios = safeRequire('axios');
+const ical = safeRequire('node-ical');
 
 /**
  * =============================================================================

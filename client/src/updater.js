@@ -42,6 +42,11 @@ class PatchUpdater {
             log.info(`[PatchUpdater] 目前版本: ${currentVersion} / 最新版本: ${latestVersion}`);
 
             if (this.compareVersions(latestVersion, currentVersion) > 0) {
+                // [v2.0.8] 檢查黑名單
+                if (versionService.isVersionFailed(latestVersion)) {
+                    log.info(`[PatchUpdater] 版本 v${latestVersion} 曾發生過失敗，跳過補丁更新。`);
+                    return false;
+                }
                 log.info(`[PatchUpdater] 發現新版本 v${latestVersion}，尋找增量補丁檔...`);
 
                 const patchAsset = releaseInfo.assets.find(asset =>
@@ -174,6 +179,8 @@ class PatchUpdater {
             } else {
                 log.warn(`[PatchUpdater] 健康檢查失敗，啟動自動回退！`);
                 await versionService.rollback();
+                // [v2.0.8] 紀錄失敗，避免無限循環
+                await versionService.recordFailedVersion(latestVersion);
                 throw new Error('新版本健康檢查未通過，已自動回退至原版本。');
             }
 

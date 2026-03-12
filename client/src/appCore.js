@@ -4,7 +4,21 @@
 
 const { app, BrowserWindow, Notification, ipcMain, shell, dialog } = require('electron');
 const path = require('path');
-const logger = require('electron-log');
+
+// [v2.0.10] 深度防禦性載入：確保在 patches 目錄下也能正確載入母體的依賴
+let logger;
+try {
+    logger = require('electron-log');
+    if (!logger.info) throw new Error('stub');
+} catch (e) {
+    try {
+        const electronLogPath = require.resolve('electron-log', { paths: [process.cwd(), __dirname, path.join(process.cwd(), 'resources/app.asar/node_modules')] });
+        logger = require(electronLogPath);
+    } catch (e2) {
+        logger = { info: () => { }, warn: () => { }, error: () => { } };
+    }
+}
+
 let autoUpdater;
 try {
     autoUpdater = require('electron-updater').autoUpdater;

@@ -1,6 +1,20 @@
 const fs = require('fs');
 const path = require('path');
-const log = require('electron-log');
+
+// [v1.18.37] 深度防禦性載入：確保在 patches 目錄下也能正確載入母體的依賴
+let log;
+try {
+    log = require('electron-log');
+    if (!log.info) throw new Error('stub');
+} catch (e) {
+    try {
+        const electronLogPath = require.resolve('electron-log', { paths: [process.cwd(), __dirname, path.join(process.cwd(), 'resources/app.asar/node_modules')] });
+        log = require(electronLogPath);
+    } catch (e2) {
+        // 最低限度 Stub，避免崩潰
+        log = { info: () => { }, warn: () => { }, error: () => { } };
+    }
+}
 
 /**
  * [v1.14.0] 專家級啟動健康檢查 (Safe-to-Run Checker)
