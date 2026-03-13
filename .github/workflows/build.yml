@@ -51,8 +51,12 @@ jobs:
         run: |
           cd client
           
-          # 取得版本號
-          $VERSION = node -p "require('./package.json').version"
+          # [v2.0.12] 優先從 Git Tag 取得正確的版本號
+          if ("${{ github.ref_type }}" -eq "tag") {
+              $VERSION = "${{ github.ref_name }}".TrimStart('v')
+          } else {
+              $VERSION = node -p "require('./package.json').version"
+          }
           echo "Preparing Release for v$VERSION"
           
           # [步驟 1] 打裝安裝程式
@@ -62,6 +66,7 @@ jobs:
           # [步驟 2] 製作業務補丁 (Patch)
           echo "Generating Patch Zip..."
           if (Test-Path "src") {
+              # [v2.0.14] 恢復完整目錄結構壓縮，確保解壓後路徑為 app_patches/src/xxx.js
               Compress-Archive -Path src -DestinationPath "patch-v${VERSION}.zip" -Force
           }
           

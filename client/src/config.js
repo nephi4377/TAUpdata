@@ -131,6 +131,8 @@ class ConfigManager {
                 fs.mkdirSync(DATA_DIR, { recursive: true });
             }
             options.cwd = DATA_DIR;
+            // [強制鎖定] 正式版或開發版預設皆關閉除錯模式，除非手動切換
+            options.defaults.debugMode = false;
         }
 
         // 設定 Store

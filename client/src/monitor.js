@@ -221,17 +221,16 @@ class MonitorService {
         try {
             // [v1.14.1] 專家級時鐘差值計算
             const nowTs = Date.now();
+            // [v1.15.9] 強化計時邏輯：使用性能計時器或嚴格時間差
             const now = new Date(nowTs);
-            let durationSeconds = this.sampleInterval / 1000;
+            let durationSeconds;
 
-            if (this.lastSampleTime) {
+            if (!this.lastSampleTime) {
+                // 首次取樣或重啟後，使用預設取樣間隔
+                durationSeconds = this.sampleInterval / 1000;
+            } else {
                 // 真正的時間差 (秒)
                 durationSeconds = Math.round((nowTs - this.lastSampleTime.getTime()) / 1000);
-
-                // [v1.18.4] 專家級防禦：若時間差過大 (> 60s)，可能剛從休眠喚醒
-                // 為了數據準確性，強制校準為 15s 取樣基準，防止數據灌水 (Spike Protection)
-                if (durationSeconds > 60) {
-                    console.log(`[Monitor] 偵測到時間突波 (${durationSeconds}s)，自動校準為 15s`);
                     durationSeconds = 15;
                 }
             }
@@ -894,64 +893,7 @@ class MonitorService {
         const checkinBtn = boundEmployee
             ? `<button class="btn ok" onclick="doCheckin(event)" id="checkin-btn">✅ 打卡</button>
                <button class="btn info" onclick="window.reminderAPI.openDashboardWindow()">🖥️ 主控台</button>`
-            : `<button class="btn" style="background:#e67e22; width:100%;" onclick="window.reminderAPI.openLinkWindow()">📲 前往綁定 (LINE)</button>`;
-
-        let appH = '';
-        if (topApps && topApps.length > 0) {
-            topApps.forEach((a, i) => {
-                const timeStr = a.duration_formatted || '0分';
-
-                appH += `<div class="app-row">
-                    <span style="color:#888; font-size:11px; width:25px;">${i + 1}.</span>
-                    <span style="flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:13px; color:#5d4037;">${a.app_name}</span>
-                    <span style="font-weight:bold; color:#d35400; font-size:13px;">${timeStr}</span>
-                </div>`;
-            });
-        }
-
-        const isIcloudOnline = data.icloudConnected;
-        const hasIcloudUrl = !!data.icloudUrl;
-
-        let syncStatus = '<span class="status-dot offline"></span>';
-        let syncText = 'iCloud 未連線';
-
-        if (isIcloudOnline) {
-            syncStatus = '<span class="status-dot online"></span>';
-            syncText = 'iCloud 已連線';
-        } else if (!hasIcloudUrl) {
-            syncStatus = '<span class="status-dot offline" style="background:#e74c3c;"></span>';
-            syncText = '❌ iCloud 網址未設定';
-        }
-
-        return `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>
-            * { margin:0; padding:0; box-sizing:border-box; font-family:"Microsoft JhengHei", sans-serif; }
-            body { background:#f9fcfc; color:#2c3e50; padding:18px; overflow-x:hidden; }
-            .card { background:#fff; border-radius:18px; padding:22px; margin-bottom:18px; box-shadow:0 8px 30px rgba(0,0,0,0.03); border:1px solid #f0f4f4; transition: 0.3s; }
-            .card:hover { transform: translateY(-2px); box-shadow: 0 12px 40px rgba(0,0,0,0.05); }
-            h2 { font-size:16px; margin-bottom:15px; display:flex; align-items:center; gap:10px; color:#4a5a5a; font-weight:700; }
-            .summary-val { font-size:24px; font-weight:800; color:#2c3e50; letter-spacing:-0.5px; }
-            .btn-group { display:flex; gap:15px; margin-top:18px; }
-            .btn { flex:1; padding:14px; border:none; border-radius:15px; cursor:pointer; font-weight:700; font-size:15px; transition:0.3s cubic-bezier(0.4, 0, 0.2, 1); display:flex; align-items:center; justify-content:center; gap:8px; }
-            .btn.ok { background:linear-gradient(135deg, #10b981, #059669); color:white; box-shadow:0 4px 15px rgba(16,185,129,0.2); }
-            .btn.ok:hover { transform:scale(1.02); box-shadow:0 6px 20px rgba(16,185,129,0.3); }
-            .btn.info { background:#f1f5f9; color:#475569; border:1px solid #e2e8f0; }
-            .btn.info:hover { background:#e2e8f0; }
-            .task-item { display:flex; justify-content:space-between; align-items:center; padding:8px 12px; border-radius:10px; margin-bottom:4px; background:#f8fafc; border:1px solid #f1f5f9; transition:0.2s; }
-            .task-item:hover { background:#fff; border-color:#d1d5db; transform: translateX(2px); }
-            .task-item.completed { opacity:0.5; background:#f1f5f9; }
-            .task-title { font-size:13px; font-weight:600; color:#334155; display:flex; align-items:center; gap:8px; line-height:1.4; }
-            .task-btn { background:#fff; border:2px solid #10b981; border-radius:8px; width:26px; height:26px; cursor:pointer; display:flex; align-items:center; justify-content:center; color:#10b981; font-weight:bold; transition:0.2s; font-size:12px; }
-            .task-btn:hover { background:#10b981; color:#fff; }
-            .task-btn.done { border-color:#94a3b8; color:#94a3b8; }
-            .app-list-container { max-height:250px; overflow-y:auto; padding-right:5px; }
-            .app-row { display:flex; align-items:center; padding:10px 0; border-bottom:1px solid #f1f5f9; }
-            .status-dot { width:10px; height:10px; border-radius:50%; display:inline-block; }
-            .status-dot.online { background:#10b981; box-shadow:0 0 8px rgba(16,185,129,0.4); }
-            .status-dot.offline { background:#94a3b8; }
-        </style></head>
-        <body>
-            <div class="card">
-                <!-- 視覺改動：左側大秘書，右側資訊流 -->
+            : `<button class="btn" style="background:#e67e22; width:100%;" onclick="window.reminderAPI.openLinkWindow()">📲 前往綁定 (LINE)                <!-- 視覺改動：左側大秘書，右側資訊流 -->
                 <div style="display:flex; gap:20px; align-items:flex-start;">
                     <!-- 左側：壯觀小秘書 (120x180) -->
                     <div style="width:130px; flex-shrink:0;">
@@ -966,9 +908,61 @@ class MonitorService {
                             <div style="position:absolute; top:20px; left:-10px; border-width:5px 10px 5px 0; border-style:solid; border-color:transparent #f0e6d6 transparent transparent;"></div>
                         </div>
 
-                        <!-- 數據三排 -->
-                        <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; text-align:center;">
+                        <!-- 數據顯示 (已隱藏，背景維持統計) -->
+                        <div style="display:none; grid-template-columns:1fr 1fr 1fr; gap:8px; text-align:center;">
                             <div style="background:#fdfcf9; padding:10px; border-radius:10px; border:1px solid #f9f7f2;"><div class="summary-val" id="stat-work">${workTime}</div><div style="font-size:12px; color:#8d6e63;">工作</div></div>
+                            <div style="background:#fdfcf9; padding:10px; border-radius:10px; border:1px solid #f9f7f2;"><div class="summary-val" id="stat-leisure" style="color:#e91e63;">${leisureTime}</div><div style="font-size:12px; color:#8d6e63;">休閒</div></div>
+                            <div style="background:#fdfcf9; padding:10px; border-radius:10px; border:1px solid #f9f7f2;"><div class="summary-val" id="stat-other" style="color:#795548;">${otherTime}</div><div style="font-size:12px; color:#8d6e63;">其他</div></div>
+                        </div>
+
+                        <!-- 進度條 (僅顯示打卡與基本狀態) -->
+                        <div style="margin-top:5px;">
+                            <div style="height:10px; background:#f0ede8; border-radius:5px; overflow:hidden; display:none;">
+                                <div id="p-f" style="height:100%; background:linear-gradient(to right, #e67e22, #ffa726); width:${rate}%;"></div>
+                            </div>
+                            <!-- <div id="p-t" style="text-align:center; font-weight:bold; font-size:15px; margin-top:8px; color:#5d4037;">當前生產力：${rate}%</div> -->
+                            <div id="p-t" style="text-align:center; font-weight:bold; font-size:15px; margin-top:8px; color:#5d4037;">今日狀態：同步中 ✨</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 使用者資訊與 iCloud 燈號 (置於第一區塊下方) -->
+                <div style="display:flex; justify-content:space-between; align-items:center; border-top:1.5px solid #f9f7f2; margin-top:20px; padding-top:15px;">
+                    <div style="font-size:14px; font-weight:bold; color:#5d4037;">
+                        👤 使用者: ${boundEmployee ? boundEmployee.userName : '未連結'} 
+                    </div>
+                    <div id="icloud-status-bar" style="font-size:12px; color:#8d6e63; display:flex; align-items:center; background:#fdfcf9; padding:5px 12px; border-radius:8px; border:1px solid #f0e6d6;">${syncStatus} ${syncText}</div>
+                </div>
+                
+                <div style="display:grid; grid-template-columns:1fr 1fr; margin-top:12px; gap:12px; font-size:15px; color:#8d6e63; font-weight:500;">
+                    <div>🕒 上班時間: <span id="val-checkin-time" style="color:#555;">${workInfo?.checkinTime || '--:--'}</span></div>
+                    <div>🕒 預計下班: <span id="val-off-time" style="color:#555;">${workInfo?.expectedOffTime || '--:--'}</span></div>
+                </div>
+
+                <!-- 底部橫排按鈕 (使用對齊後的動態變數) -->
+                <div class="btn-group">
+                    ${checkinBtn}
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-top:5px; padding:0 2px;">
+                    <div id="sync-ts" style="font-size:10px; color:#aaa;">首次加載中...</div>
+                    <div style="font-size:10px; color:#ccc; display:flex; align-items:center; gap:5px;">
+                        ${data.version} 
+                        <span style="cursor:pointer; opacity:0.3; transition:0.3s;" onclick="window.reminderAPI.testFireReminder()" title="穩定性測試">🐞</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 下層：提醒事項 (預設顯示) -->
+            <div class="card" id="task-center-card">
+                <div id="debug-box" style="display:none; background:rgba(0,0,0,0.8); color:#0f0; font-family:monospace; font-size:10px; padding:10px; border-radius:8px; margin-bottom:10px; max-height:100px; overflow-y:auto;"></div>
+                <h2>📋 今日提醒與待辦事項</h2>
+                <div id="t-l"><div style="text-align:center; color:#ccc; font-size:14px; padding:20px;">正在加載今日計畫...</div></div>
+            </div>
+
+            <div class="card" style="display:none;">
+                <h2>📈 全量應用活躍排行</h2>
+                <div id="app-ranking-list" class="app-list-container">${appH || '<div style="text-align:center; color:#ccc; font-size:14px; padding:20px;">暫無活躍記錄</div>'}</div>
+            </div>-val" id="stat-work">${workTime}</div><div style="font-size:12px; color:#8d6e63;">工作</div></div>
                             <div style="background:#fdfcf9; padding:10px; border-radius:10px; border:1px solid #f9f7f2;"><div class="summary-val" id="stat-leisure" style="color:#e91e63;">${leisureTime}</div><div style="font-size:12px; color:#8d6e63;">休閒</div></div>
                             <div style="background:#fdfcf9; padding:10px; border-radius:10px; border:1px solid #f9f7f2;"><div class="summary-val" id="stat-other" style="color:#795548;">${otherTime}</div><div style="font-size:12px; color:#8d6e63;">其他</div></div>
                         </div>

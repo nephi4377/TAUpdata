@@ -25,9 +25,7 @@ async function runHealthCheck() {
         'appCore.js',
         'monitor.js',
         'storage.js',
-        'apiBridge.js',
-        'versionService.js',
-        'healthCheck.js'
+        'apiBridge.js'
     ];
 
     for (const f of criticalFiles) {

@@ -446,6 +446,24 @@ class ApiBridge {
             const result = [];
 
             for (const ev of events) {
+                const summary = ev.summary || '';
+                const location = ev.location || '';
+                
+                // [v2.2.8.5] 排除內部人員對話/行程轉為提醒事項
+                // 比對摘要與地點中是否包含員工姓名
+                let isInternalMessage = false;
+                for (const empName of this.employeeNames) {
+                    if (summary.includes(empName) || location.includes(empName)) {
+                        isInternalMessage = true;
+                        break;
+                    }
+                }
+                
+                if (isInternalMessage) {
+                    console.log(`[ApiBridge] 過濾內部人員行程: ${summary}`);
+                    continue;
+                }
+
                 const startDate = new Date(ev.start);
                 const endDate = new Date(ev.end);
                 let isToday = false;
