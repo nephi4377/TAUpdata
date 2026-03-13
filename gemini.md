@@ -35,6 +35,7 @@
 - **目標檔案**: 統一記於該專案根目錄之 `部署記錄_XXXXX.md` (例如：`添心生產力助手` 專案記入 `部署記錄_添心生產力助手.md`；`CODING` 專案記入 `部署記錄_CODING.md`)。
 - **紀錄時機**: 檔案修改、部署、執行關鍵 Shell 指令。
 - **格式**: `YYYY-MM-DD HH:mm | 變更摘要 | 技術細節 | 結果 (成功/失敗)`。
+- **做記錄路徑**: 採取與寫程式相同的方式。禁止使用 PowerShell 變數 (例如 `$log`) 或會產生詢問使用者的指令。**必須利用 `replace_file_content` 或 `multi_replace_file_content` 工具** 直接更新 `部署記錄_XXXXX.md` 與 `gemini.md`。
 
 ## 5. 自動化部署授權 (Automation Authorization)
 - **觸發機制**：Gemini 嚴禁自主進行小修改後自動部署。**所有部署必須由總監明確要求執行**。

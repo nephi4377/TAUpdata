@@ -339,12 +339,13 @@ class ApiBridge {
 
     // 啟動初始化
     async initializeOnStartup() {
+        // [v2.3.3] 動態過濾強化：啟動時優先抓取員工名單 (不論是否已綁定)
+        this.getEmployeeList().catch(() => {});
+
         const localBound = this.config.getBoundEmployee();
         const isFirstRun = this.config.isFirstRun();
 
         if (localBound) {
-            // [v2.2.8.3] 啟動時順便抓取一次員工名單 (背景執行)
-            this.getEmployeeList().catch(() => {});
 
             const workInfoResult = await this.getWorkInfo(localBound.userId);
             if (workInfoResult.success) {

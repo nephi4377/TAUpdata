@@ -1,4 +1,4 @@
-const { app, BrowserWindow, screen, ipcMain, shell, powerMonitor } = require('electron');
+const { Notification, dialog, powerMonitor, BrowserWindow, screen, app, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const https = require('https');
@@ -55,6 +55,7 @@ class MonitorService {
             { minutes: 270, shown: false, icon: '🛑', title: '休息是為了走更長的路', message: '已經連續工作 4.5 小時了', detail: '你的健康比什麼都重要！\n請務必休息後再繼續 🙏' }
         ];
 
+
         console.log('[Monitor] 監測服務已建立');
     }
 
@@ -65,6 +66,7 @@ class MonitorService {
     setReminderService(reminderService) {
         this.reminderService = reminderService;
     }
+
 
     // 啟動監測
     async start() {
@@ -154,6 +156,14 @@ class MonitorService {
         }
     }
 
+    // [v26.03.01] 專家級統計數據快照同步 - 解決計時器卡死在 13 分的問題
+    async _syncDisplayStatsWithDB() {
+        const stats = await this.storageService.getTodayTotalSeconds();
+        // 內存累加為主，僅在明顯落後 DB 時對齊 (防禦性設計)
+        if (stats.work > this.currentWorkSeconds) this.currentWorkSeconds = stats.work;
+        if (stats.leisure > this.currentLeisureSeconds) this.currentLeisureSeconds = stats.leisure;
+        if (stats.other > (this.currentOtherSeconds || 0)) this.currentOtherSeconds = stats.other;
+    }
 
     // 重設休閒追蹤 (僅重設警示狀態，不歸零今日總計)
     resetLeisureTracking() {
@@ -212,18 +222,15 @@ class MonitorService {
             // [v1.14.1] 專家級時鐘差值計算
             const nowTs = Date.now();
             const now = new Date(nowTs);
-            let durationSeconds;
+            let durationSeconds = this.sampleInterval / 1000;
 
-            if (!this.lastSampleTime) {
-                // 首次取樣或重啟後，使用預設取樣間隔
-                durationSeconds = this.sampleInterval / 1000;
-            } else {
+            if (this.lastSampleTime) {
                 // 真正的時間差 (秒)
                 durationSeconds = Math.round((nowTs - this.lastSampleTime.getTime()) / 1000);
 
-                // [v2.2.8.5 BUGFIX] 排除異常大的時間差 (例如休眠後喚醒)
-                // 防止數據灌水 (Spike Protection)
-                if (durationSeconds > 60 || durationSeconds < 0) {
+                // [v1.18.4] 專家級防禦：若時間差過大 (> 60s)，可能剛從休眠喚醒
+                // 為了數據準確性，強制校準為 15s 取樣基準，防止數據灌水 (Spike Protection)
+                if (durationSeconds > 60) {
                     console.log(`[Monitor] 偵測到時間突波 (${durationSeconds}s)，自動校準為 15s`);
                     durationSeconds = 15;
                 }
@@ -595,6 +602,18 @@ class MonitorService {
             .replace(/'/g, '&#039;');
     }
 
+    // 測試休閒警示
+    testLeisureAlert() {
+        console.log('[Monitor] 測試休閒警示');
+        this.showToast('⚠️ 專注提醒（測試）', '已在「YouTube」停留 5 分鐘\n休息一下吧！');
+    }
+
+    // 測試工作警示
+    testWorkAlert(level = 0) {
+        console.log('[Monitor] 測試工作警示');
+        const alertLevel = this.workAlertLevels[level] || this.workAlertLevels[0];
+        this.showToast(`${alertLevel.icon} ${alertLevel.title}（測試）`, `${alertLevel.message}\n${alertLevel.detail}`);
+    }
 
     // 設定午休時間
     setLunchBreak(startHour, endHour) {
@@ -616,10 +635,10 @@ class MonitorService {
         // 初始發送
         this._sendHeartbeat();
 
-        // 每 3 分鐘發送一次
+        // 每 5 分鐘發送一次
         this.heartbeatInterval = setInterval(() => {
             this._sendHeartbeat();
-        }, 3 * 60 * 1000);
+        }, 5 * 60 * 1000);
     }
 
     async _sendHeartbeat() {
@@ -630,58 +649,110 @@ class MonitorService {
             this.apiBridge.services.firebaseService.updateHeartbeat(status, this.lastAppName || '');
         }
     }
-
     // [v1.13.0] 專家職責遷移：從 TrayManager 接管統計視窗渲染
+    // [v1.14.0] 專家診斷：獲取數據前強制進行一次數據庫對齊，解決計時器卡死在 13 分的問題
     async getStatsData(configManager, reminderService) {
-        // [v1.13.2 Fix] 防禦性設計
+        // [v26.03.01 Fix] 移除強制 _restoreTodayStats，改用輕量級同步，防止計時器回跳 (跳回 13 分/25 分)
+        // 因 DB 寫入與緩存可能有 15s 延遲，內存變數才是最即時的真實數據。
+        // await this._restoreTodayStats(); 
+
+        // [v1.13.2 Fix] 防禦性設計：若漏傳服務，嘗試從內部引用獲取
         const cfg = configManager || (this.classifierService ? this.classifierService.configManager : null);
         if (!cfg) {
-            console.warn('[Monitor] getStatsData 缺乏 ConfigManager');
+            console.warn('[Monitor] getStatsData 缺乏 ConfigManager，暫時返回空數據');
             return { topApps: [], stats: {}, status: this.getStatus() };
         }
 
         const todayStr = new Date().toISOString().split('T')[0];
-        const gender = cfg.getMascotGender() || 'female';
-        let currentSkin = cfg.getMascotSkin() || 'default';
-        const lastChange = cfg.getLastSkinChangeDate();
+        const gender = configManager.getMascotGender() || 'female';
+        let currentSkin = configManager.getMascotSkin() || 'default';
+        const lastChange = configManager.getLastSkinChangeDate();
 
-        // 每日一換邏輯
+        // [v1.13.0] 每日一換邏輯：若日期不符，則重新抽籤並更新紀錄
         if (lastChange !== todayStr) {
+            console.log(`[Monitor] 偵測到新的一天 (${todayStr})，更換小秘書裝束...`);
             if (gender === 'female') {
                 const skins = ['default', 'blizzard', 'thunder', 'boulder', 'sacred', 'prism'];
                 currentSkin = skins[Math.floor(Math.random() * skins.length)];
             } else {
-                currentSkin = 'default';
+                currentSkin = 'default'; // 男秘書目前僅有 default
             }
-            cfg.setMascotSkin(currentSkin);
-            cfg.setLastSkinChangeDate(todayStr);
+            configManager.setMascotSkin(currentSkin);
+            configManager.setLastSkinChangeDate(todayStr);
         }
 
         let fname = (gender === 'female' && currentSkin !== 'default')
             ? `secretary_${currentSkin}.png`
             : (gender === 'female' ? 'secretary.png' : 'secretary_male.png');
 
-        const mascotPath = await this.ensureMascotCached(fname);
+        const mascotPath = await Promise.race([
+            this.ensureMascotCached(fname),
+            new Promise(resolve => setTimeout(() => resolve(null), 3000))
+        ]);
 
-        // 讀取頭像
+        // [v1.17.1] 修復：data: URL 中無法載入 file:// 資源，改用 base64 data URI
         let mascotUrl = '';
-        if (mascotPath && fs.existsSync(mascotPath)) {
+        const localAssetPath = path.join(__dirname, '..', 'assets', fname);
+        const cachedPath = mascotPath;
+        const imgPath = (cachedPath && fs.existsSync(cachedPath)) ? cachedPath : (fs.existsSync(localAssetPath) ? localAssetPath : null);
+        if (imgPath) {
             try {
-                const imgBuffer = fs.readFileSync(mascotPath);
+                const imgBuffer = fs.readFileSync(imgPath);
                 mascotUrl = `data:image/png;base64,${imgBuffer.toString('base64')}`;
-            } catch (e) {}
+            } catch (e) {
+                console.warn('[Monitor] 頭像讀取失敗:', e.message);
+            }
         }
         if (!mascotUrl) {
             mascotUrl = `https://raw.githubusercontent.com/nephi4377/TAUpdata/master/client/assets/${fname}`;
         }
 
-        // 獲取數據
+        // 獲取今日排行：修正參數為 1（代表取今天），原本誤傳 1000（天）導致查無資料
         const rawTopApps = await this.storageService.getRecentTopApps(1);
+        console.log(`[Monitor] 原始排行數據: ${JSON.stringify(rawTopApps)}`);
+
+        // 前端加總邏輯：合併相同應用的時數與分類
+        const combinedApps = {};
+        if (rawTopApps && rawTopApps.length > 0) {
+            rawTopApps.forEach(a => {
+                const name = a.app_name || a.appName || '未知';
+
+                if (!combinedApps[name]) {
+                    combinedApps[name] = {
+                        dur: 0,
+                        category: a.category || 'other'
+                    };
+                }
+                const dur = a.total_seconds || a.totalSeconds || a.duration_seconds || a.durationSeconds || 0;
+                combinedApps[name].dur += dur;
+            });
+        }
+
+        // [v26.03.02 Fix] 注入當前活躍的內存數據到排行榜
+        if (this.lastAppName) {
+            const name = this.lastAppName;
+            if (!combinedApps[name]) {
+                combinedApps[name] = { dur: 0, category: this.lastCategory || 'other' };
+            }
+            // 視為今日採樣的一部分
+            combinedApps[name].dur += 15;
+        }
+
+        const topApps = Object.entries(combinedApps)
+            .map(([name, data]) => ({
+                app_name: name,
+                duration_seconds: data.dur,
+                category: data.category
+            }))
+            .sort((a, b) => b.duration_seconds - a.duration_seconds)
+            .filter(a => a.duration_seconds > 0);
+
         const dbStats = await this.storageService.getTodayStats();
 
-        // [v1.16.9] 數據牆封頂
+        // [v1.16.9] 數據牆封頂：所有分類與排行數值強制截斷至 720 分鐘 (對齊規約 05_IDEAS_AND_BRAINSTORM)
         const limitWall = (m) => Math.min(Math.max(0, m || 0), 720);
 
+        // [v26.03.04 Fix] 使用內存累加值為主，DB 為輔：解決 DB 15 秒延遲寫入導致前端數據停滯
         const memWork = Math.round((this.currentWorkSeconds || 0) / 60);
         const memLeisure = Math.round((this.currentLeisureSeconds || 0) / 60);
         const memOther = Math.round((this.currentOtherSeconds || 0) / 60);
@@ -691,34 +762,47 @@ class MonitorService {
         const finalOther = limitWall(Math.max(dbStats.other, memOther));
         const finalIdle = limitWall(dbStats.idle);
 
+        // [v2.2.8.4] @STABLE 生產力指數公式：(工作 + 其他) / (工作 + 休閒 + 其他)
+        const totalEffective = finalWork + finalOther;
+        const activeTotal = totalEffective + finalLeisure;
+        const productivityRate = activeTotal > 0 ? Math.round((totalEffective / activeTotal) * 100) : 0;
 
         const workInfo = cfg.getTodayWorkInfo();
+        if (workInfo && workInfo.checkedIn && workInfo.checkinTime && (!workInfo.expectedOffTime || workInfo.expectedOffTime === '--:--')) {
+            try {
+                const [h, m] = workInfo.checkinTime.split(':').map(Number);
+                const offH = (h + 9) % 24;
+                workInfo.expectedOffTime = `${String(offH).padStart(2, '0')}:${String(m).padStart(2, '0')} (估)`;
+            } catch (e) { }
+        }
+
         let effectiveVersionStr = 'Unknown';
         try {
-             // [v2.2.8.5] 嚴格路徑加載版號
-             const vsPath = path.join(__dirname, 'versionService.js');
-             if (fs.existsSync(vsPath)) {
-                 const vSvc = require('./versionService').versionService;
-                 if(vSvc) effectiveVersionStr = vSvc.getEffectiveVersion();
-             }
-        } catch(e) {}
+            // [v2.0.11] 防禦性載入 versionService，因為它已經被移至 app.asar
+            const vSvc = require('./versionService').versionService || require('../src/versionService').versionService || require(path.join(process.cwd(), 'resources/app.asar/src/versionService')).versionService;
+             if(vSvc) effectiveVersionStr = vSvc.getEffectiveVersion();
+        } catch(e) {
+             console.warn('[Monitor] 此環境無法獲取版號:', e.message);
+        }
 
         return {
             version: effectiveVersionStr,
-            debugMode: cfg.getDebugMode(),
+            debugMode: false, // [v2.3.0] 強制停用除錯模式
             workTime: this.formatMinutes(finalWork),
             leisureTime: this.formatMinutes(finalLeisure),
             otherTime: this.formatMinutes(finalOther),
             idleTime: this.formatMinutes(finalIdle),
+            productivityRate: Math.min(100, productivityRate),
             boundEmployee: cfg.getBoundEmployee(),
             workInfo: workInfo,
             icloudConnected: this.apiBridge ? this.apiBridge.icloudConnected : false,
-            icloudUrl: cfg.getIcloudCalendarUrl(),
+            icloudUrl: cfg ? cfg.getIcloudCalendarUrl() : null,
             todayReminders: (await (reminderService ? reminderService.getTodayReminderStatus() : [])),
             localTasks: (await this.storageService.getLocalTasks()) || [],
-            topApps: rawTopApps.slice(0, 10).map(a => ({
-                app_name: a.app_name || '未知',
-                duration_formatted: this.formatMinutes(Math.round((a.total_seconds || 0) / 60))
+            topApps: topApps.slice(0, 10).map(a => ({
+                ...a,
+                duration_seconds: Math.min(86400, a.duration_seconds), // 確保數據排行不溢出
+                duration_formatted: this.formatMinutes(Math.round(a.duration_seconds / 60))
             })),
             mascotUrl: mascotUrl,
             lastUpdate: new Date().toLocaleTimeString('zh-TW', { hour12: false })
@@ -742,19 +826,25 @@ class MonitorService {
 
     async showStatsWindow(configManager, reminderService, isManual = true) {
         try {
+            console.log('[Monitor] 極速啟動統計中心 (Memory-Inject Mode)...');
+
             if (this.statsWindow && !this.statsWindow.isDestroyed()) {
                 const data = await this.getStatsData(configManager, reminderService);
                 this.statsWindow.webContents.send('update-stats-data', data);
-                if (isManual) { this.statsWindow.show(); this.statsWindow.focus(); }
+                if (isManual) {
+                    this.statsWindow.show();
+                    this.statsWindow.focus();
+                }
                 return;
             }
 
             this.statsWindow = new BrowserWindow({
-                width: 720, height: 880, title: '添心統計中心',
+                width: 720, height: 880, title: `添心統計中心 (v${this.versionService.getEffectiveVersion()})`,
                 autoHideMenuBar: true, show: false,
                 webPreferences: { contextIsolation: true, preload: path.join(__dirname, 'reminderPreload.js') }
             });
 
+            // 建構初始加載 HTML
             const loadingHtml = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>
                 body { background:#f9fcfc; display:flex; justify-content:center; align-items:center; height:100vh; color:#e67e22; font-family:sans-serif; flex-direction:column; gap:20px; }
                 .loader { width:40px; height:40px; border:4px solid #f0e6d6; border-top:4px solid #e67e22; border-radius:50%; animation:spin 1s linear infinite; }
@@ -764,6 +854,7 @@ class MonitorService {
             this.statsWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(loadingHtml)}`);
             this.statsWindow.once('ready-to-show', () => this.statsWindow.show());
 
+            // 異步渲染主內容 (使用 setImmediate 確保視窗先顯示)
             setImmediate(async () => {
                 try {
                     const data = await this.getStatsData(configManager, reminderService);
@@ -772,7 +863,7 @@ class MonitorService {
                         this.statsWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(finalHtml)}`);
                     }
                 } catch (e) {
-                    console.error('[Monitor] 渲染失敗:', e.message);
+                    console.error('[Monitor] 視窗內容載入失敗:', e.message);
                 }
             });
 
@@ -782,144 +873,516 @@ class MonitorService {
         }
     }
 
+    _startAutoRefresh(config, reminder) {
+        // [v26.03.01 BUGFIX] 移除此重複定時器，由 AppCore 統一每 60 秒刷新即可，減少資源消耗
+    }
+
+    _stopAutoRefresh() {
+        // 職責移交至 AppCore
+    }
+
     async generateStatsHtml(data) {
-        const { mascotUrl, boundEmployee, workInfo, icloudConnected } = data;
+        const { mascotUrl, workTime, leisureTime, otherTime, idleTime, productivityRate, topApps, boundEmployee, workInfo } = data;
+        const rate = productivityRate || 0;
+
+        // [v1.13.0] 語意化對話邏輯
         let bubbleMsg = '正在為您守護今日進度...✨';
+        if (rate >= 80) bubbleMsg = '今天的表現太棒了！簡直是高效代名詞 💪';
+        else if (rate >= 50) bubbleMsg = '進度穩定推進中，繼續保持喔 ☕';
+        else if (rate > 0) bubbleMsg = '剛開始啟動嗎？小添陪您一起加油 📈';
 
         const checkinBtn = boundEmployee
             ? `<button class="btn ok" onclick="doCheckin(event)" id="checkin-btn">✅ 打卡</button>
                <button class="btn info" onclick="window.reminderAPI.openDashboardWindow()">🖥️ 主控台</button>`
             : `<button class="btn" style="background:#e67e22; width:100%;" onclick="window.reminderAPI.openLinkWindow()">📲 前往綁定 (LINE)</button>`;
 
+        let appH = '';
+        if (topApps && topApps.length > 0) {
+            topApps.forEach((a, i) => {
+                const timeStr = a.duration_formatted || '0分';
+
+                appH += `<div class="app-row">
+                    <span style="color:#888; font-size:11px; width:25px;">${i + 1}.</span>
+                    <span style="flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:13px; color:#5d4037;">${a.app_name}</span>
+                    <span style="font-weight:bold; color:#d35400; font-size:13px;">${timeStr}</span>
+                </div>`;
+            });
+        }
+
+        const isIcloudOnline = data.icloudConnected;
+        const hasIcloudUrl = !!data.icloudUrl;
+
+        let syncStatus = '<span class="status-dot offline"></span>';
+        let syncText = 'iCloud 未連線';
+
+        if (isIcloudOnline) {
+            syncStatus = '<span class="status-dot online"></span>';
+            syncText = 'iCloud 已連線';
+        } else if (hasIcloudUrl) {
+            syncStatus = '<span class="status-dot offline"></span>';
+            syncText = 'iCloud 已設定';
+        } else {
+            syncStatus = '<span class="status-dot offline" style="background:#e74c3c;"></span>';
+            syncText = '❌ iCloud 網址未設定';
+        }
 
         return `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>
             * { margin:0; padding:0; box-sizing:border-box; font-family:"Microsoft JhengHei", sans-serif; }
-            body { background:#f9fcfc; color:#2c3e50; padding:18px; }
-            .card { background:#fff; border-radius:18px; padding:22px; margin-bottom:18px; box-shadow:0 8px 30px rgba(0,0,0,0.03); border:1px solid #f0f4f4; }
-            h2 { font-size:16px; margin-bottom:15px; color:#4a5a5a; font-weight:700; }
+            body { background:#f9fcfc; color:#2c3e50; padding:18px; overflow-x:hidden; }
+            .card { background:#fff; border-radius:18px; padding:22px; margin-bottom:18px; box-shadow:0 8px 30px rgba(0,0,0,0.03); border:1px solid #f0f4f4; transition: 0.3s; }
+            .card:hover { transform: translateY(-2px); box-shadow: 0 12px 40px rgba(0,0,0,0.05); }
+            h2 { font-size:16px; margin-bottom:15px; display:flex; align-items:center; gap:10px; color:#4a5a5a; font-weight:700; }
+            .summary-val { font-size:24px; font-weight:800; color:#2c3e50; letter-spacing:-0.5px; }
             .btn-group { display:flex; gap:15px; margin-top:18px; }
-            .btn { flex:1; padding:14px; border:none; border-radius:15px; cursor:pointer; font-weight:700; display:flex; align-items:center; justify-content:center; gap:8px; transition:0.3s; }
+            .btn { flex:1; padding:14px; border:none; border-radius:15px; cursor:pointer; font-weight:700; font-size:15px; transition:0.3s cubic-bezier(0.4, 0, 0.2, 1); display:flex; align-items:center; justify-content:center; gap:8px; }
             .btn.ok { background:linear-gradient(135deg, #10b981, #059669); color:white; box-shadow:0 4px 15px rgba(16,185,129,0.2); }
+            .btn.ok:hover { transform:scale(1.02); box-shadow:0 6px 20px rgba(16,185,129,0.3); }
             .btn.info { background:#f1f5f9; color:#475569; border:1px solid #e2e8f0; }
-            .task-item { display:flex; justify-content:space-between; align-items:center; padding:10px; border-radius:10px; margin-bottom:5px; background:#f8fafc; border:1px solid #f1f5f9; transition:0.2s; }
+            .btn.info:hover { background:#e2e8f0; }
+            .task-item { display:flex; justify-content:space-between; align-items:center; padding:8px 12px; border-radius:10px; margin-bottom:4px; background:#f8fafc; border:1px solid #f1f5f9; transition:0.2s; }
+            .task-item:hover { background:#fff; border-color:#d1d5db; transform: translateX(2px); }
             .task-item.completed { opacity:0.5; background:#f1f5f9; }
-            .task-btn { background:#fff; border:2px solid #10b981; border-radius:8px; width:28px; height:28px; cursor:pointer; color:#10b981; font-weight:bold; }
+            .task-title { font-size:13px; font-weight:600; color:#334155; display:flex; align-items:center; gap:8px; line-height:1.4; }
+            .task-btn { background:#fff; border:2px solid #10b981; border-radius:8px; width:26px; height:26px; cursor:pointer; display:flex; align-items:center; justify-content:center; color:#10b981; font-weight:bold; transition:0.2s; font-size:12px; }
+            .task-btn:hover { background:#10b981; color:#fff; }
+            .task-btn.done { border-color:#94a3b8; color:#94a3b8; }
+            .app-list-container { max-height:250px; overflow-y:auto; padding-right:5px; }
+            .app-row { display:flex; align-items:center; padding:10px 0; border-bottom:1px solid #f1f5f9; }
             .status-dot { width:10px; height:10px; border-radius:50%; display:inline-block; }
-            .online { background:#10b981; box-shadow:0 0 8px rgba(16,185,129,0.4); }
-            .offline { background:#94a3b8; }
-            .app-row { display:flex; padding:8px 0; border-bottom:1px solid #f1f5f9; font-size:13px; }
-        </style></head><body>
+            .status-dot.online { background:#10b981; box-shadow:0 0 8px rgba(16,185,129,0.4); }
+            .status-dot.offline { background:#94a3b8; }
+        </style></head>
+        <body>
             <div class="card">
-                <div style="display:flex; gap:20px;">
-                    <div style="width:130px; height:200px; background:url('${mascotUrl}') top center / cover no-repeat; border-radius:14px; border:3px solid #e67e22; box-shadow:0 8px 25px rgba(0,0,0,0.1); background-color:#2c3e50;"></div>
-                    <div style="flex:1; display:flex; flex-direction:column; gap:10px;">
-                        <div id="mascot-bubble" style="background:#fffcf5; padding:15px; border-radius:15px; border:1px solid #f0e6d6; min-height:80px; position:relative; line-height:1.5;">
+                <!-- 視覺改動：左側大秘書，右側資訊流 -->
+                <div style="display:flex; gap:20px; align-items:flex-start;">
+                    <!-- 左側：壯觀小秘書 (120x180) -->
+                    <div style="width:130px; flex-shrink:0;">
+                        <div style="width:130px; height:195px; background:url('${mascotUrl}') top center / cover no-repeat; border-radius:14px; border:3px solid #e67e22; box-shadow:0 8px 25px rgba(0,0,0,0.12); background-color:#2c3e50;"></div>
+                    </div>
+
+                    <!-- 右側資訊流 -->
+                    <div style="flex:1; display:flex; flex-direction:column; gap:12px;">
+                        <!-- 秘書對話欄 (唯一動態氣泡) -->
+                        <div id="mascot-bubble" style="background:#fffcf5; color:#5d4037; padding:15px; border-radius:15px; font-size:15px; position:relative; border:1px solid #f0e6d6; line-height:1.5; transition: opacity 0.3s; box-shadow: 0 4px 10px rgba(0,0,0,0.02);">
                             ${bubbleMsg}
                             <div style="position:absolute; top:20px; left:-10px; border-width:5px 10px 5px 0; border-style:solid; border-color:transparent #f0e6d6 transparent transparent;"></div>
                         </div>
-                        <div style="text-align:center; font-weight:bold; margin-top:5px; color:#5d4037; font-size:15px;" id="p-t">今日狀態：同步中 ✨</div>
+
+                        <!-- 數據三排 (隱性化) -->
+                        <div style="display:none; grid-template-columns:1fr 1fr 1fr; gap:8px; text-align:center;">
+                            <div style="background:#fdfcf9; padding:10px; border-radius:10px; border:1px solid #f9f7f2;"><div class="summary-val" id="stat-work">${workTime}</div><div style="font-size:12px; color:#8d6e63;">工作</div></div>
+                            <div style="background:#fdfcf9; padding:10px; border-radius:10px; border:1px solid #f9f7f2;"><div class="summary-val" id="stat-leisure" style="color:#e91e63;">${leisureTime}</div><div style="font-size:12px; color:#8d6e63;">休閒</div></div>
+                            <div style="background:#fdfcf9; padding:10px; border-radius:10px; border:1px solid #f9f7f2;"><div class="summary-val" id="stat-other" style="color:#795548;">${otherTime}</div><div style="font-size:12px; color:#8d6e63;">其他</div></div>
+                        </div>
+
+                        <!-- 進度條 (隱性化) -->
+                        <div style="display:none; margin-top:5px;">
+                            <div style="height:10px; background:#f0ede8; border-radius:5px; overflow:hidden;">
+                                <div id="p-f" style="height:100%; background:linear-gradient(to right, #e67e22, #ffa726); width:${rate}%;"></div>
+                            </div>
+                            <div id="p-t" style="text-align:center; font-weight:bold; font-size:15px; margin-top:8px; color:#5d4037;">今日事，今日畢 ✨</div>
+                        </div>
                     </div>
                 </div>
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-top:15px; padding-top:15px; border-top:1px solid #eee;">
-                    <b>👤 使用者: ${boundEmployee ? boundEmployee.userName : '未連結'}</b>
-                    <span style="font-size:12px; color:#8d6e63;"><span class="status-dot ${icloudConnected ? 'online' : 'offline'}"></span> ${icloudConnected ? 'iCloud 已連線' : 'iCloud 未連線'}</span>
+
+                <div style="display:flex; justify-content:space-between; align-items:center; border-top:1.5px solid #f9f7f2; margin-top:20px; padding-top:15px;">
+                    <div style="font-size:14px; font-weight:bold; color:#5d4037;">
+                        👤 使用者: ${boundEmployee ? boundEmployee.userName : '未連結'} 
+                    </div>
+                    <div id="icloud-status-bar" style="font-size:12px; color:#8d6e63; display:flex; align-items:center; background:#fdfcf9; padding:5px 12px; border-radius:8px; border:1px solid #f0e6d6;">${syncStatus} ${syncText}</div>
                 </div>
-                <div style="display:grid; grid-template-columns:1fr 1fr; margin-top:10px; font-size:14px; color:#555;">
-                    <div>🕒 上班時間: ${workInfo?.checkinTime || '--:--'}</div>
-                    <div>🕒 預計下班: ${workInfo?.expectedOffTime || '--:--'}</div>
+                
+                <div style="display:grid; grid-template-columns:1fr 1fr; margin-top:12px; gap:12px; font-size:15px; color:#8d6e63; font-weight:500;">
+                    <div>🕒 上班時間: <span id="val-checkin-time" style="color:#555;">${workInfo?.checkinTime || '--:--'}</span></div>
+                    <div>🕒 預計下班: <span id="val-off-time" style="color:#555;">${workInfo?.expectedOffTime || '--:--'}</span></div>
                 </div>
-                <div class="btn-group">${checkinBtn}</div>
+
+                <!-- 底部橫排按鈕 (使用對齊後的動態變數) -->
+                <div class="btn-group">
+                    ${checkinBtn}
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-top:5px; padding:0 2px;">
+                    <div id="sync-ts" style="font-size:10px; color:#aaa;">首次加載中...</div>
+                    <div style="font-size:10px; color:#ccc; display:flex; align-items:center; gap:5px;">
+                        ${data.version} 
+                        <span style="cursor:pointer; opacity:0.3; transition:0.3s;" onclick="window.reminderAPI.testFireReminder()" title="穩定性測試">🐞</span>
+                    </div>
+                </div>
             </div>
+
+            <!-- 下層：提醒事項與排行 (預設顯示，確保對齊計畫書) -->
+            <div class="card" id="task-center-card">
+                <div id="debug-box" style="display:none; background:rgba(0,0,0,0.8); color:#0f0; font-family:monospace; font-size:10px; padding:10px; border-radius:8px; margin-bottom:10px; max-height:100px; overflow-y:auto;"></div>
+                <h2>📋 今日提醒與待辦事項</h2>
+                <div id="t-l"><div style="text-align:center; color:#ccc; font-size:14px; padding:20px;">正在加載今日計畫...</div></div>
+            </div>
+
             <div class="card">
-                <h2>📌 今日計畫</h2>
-                <div id="t-l"></div>
+                <h2>📈 全量應用活躍排行</h2>
+                <div id="app-ranking-list" class="app-list-container">${appH || '<div style="text-align:center; color:#ccc; font-size:14px; padding:20px;">暫無活躍記錄</div>'}</div>
             </div>
+
             <script>
-                // [v1.17.4] MDQ 隊列系統
-                let mascotQueue = [];
-                let lockUntil = 0;
-                function setMascotMsg(text, priority = 3) {
+                /**
+                 * [v1.14.4-DEBUG] 深度診斷腳本
+                 */
+                const dbg = document.getElementById('debug-box');
+                function logDebug(msg) {
+                    if(!dbg) return;
+                    if (msg.includes('ERROR:')) {
+                        dbg.style.display = 'block';
+                        dbg.innerHTML += '<div><span style="color:#ff5252">[' + new Date().toLocaleTimeString() + '] ' + msg + '</span></div>';
+                    }
+                    console.log('[DEBUG] ' + msg);
+                }
+
+                window.onerror = (msg, url, line) => {
+                    logDebug('GLOBAL ERROR: ' + msg + ' at ' + line);
+                };
+
+                logDebug('腳本開始載入...');
+
+                // [v1.17.4] 小助手對話隊列系統 (Mascot Dialogue Queue, MDQ)
+                const MASCOT_CONFIG = {
+                    QUEUE_LOCK_MS: 10000,   // 重要訊息保留 10 秒
+                    IDLE_CHAT_INTERVAL_MS: 15 * 60 * 1000 // 15 分鐘自動閒聊
+                };
+
+                let mascotState = {
+                    queue: [],
+                    currentMsg: null,
+                    lockUntil: 0,
+                    lastActive: Date.now()
+                };
+
+                const CHAT_LIB = [
+                    "案場進度還順利嗎？記得給自己三分鐘深呼吸喔 🌿",
+                    "小添正在幫您守護進度，安心專注吧 💪",
+                    "今天也是元氣滿滿的一天呢！✨",
+                    "剛才的工作回報寫得很清楚喔，辛苦了！",
+                    "喝杯熱咖啡或溫水吧，適度休息效率更高 ☕",
+                    "目前的生產力節奏很穩健，繼續保持！",
+                    "忙碌之餘，也要記得對自己微笑一下 😊",
+                    "需要幫忙整理這週的報表嗎？小添隨時待命。",
+                    "感覺現在的您專注力滿分！很有魅力呢 ✨",
+                    "完成了這麼多項，您值得給自己一點小獎勵 🎁"
+                ];
+
+                function setMascotMsg(msg, priority = 3) {
                     const now = Date.now();
                     const b = document.getElementById('mascot-bubble');
                     if(!b) return;
-                    if(now < lockUntil && priority >= 3) { mascotQueue.push({text, priority}); return; }
-                    b.innerText = text;
-                    if(priority <= 2) lockUntil = now + 10000;
+
+                    mascotState.lastActive = now;
+
+                    // 優先級定義: 1: 緊急(LINE), 2: 操作反饋, 3: 閒聊/狀態
+                    const newMsg = { text: msg, priority: priority, ts: now };
+
+                    // 邏輯:
+                    // 1. 如果鎖定中，且新訊息優先級 <= 目前訊息，則加入隊列
+                    // 2. 如果鎖定中，但新訊息是更高優先級 (如 LINE 蓋掉閒聊)，則直接中斷並顯示
+                    // 3. 如果沒鎖定，直接顯示
+                    
+                    const isLocked = now < mascotState.lockUntil;
+                    const isHigherPriority = mascotState.currentMsg && newMsg.priority < mascotState.currentMsg.priority;
+
+                    if (isLocked && !isHigherPriority) {
+                        mascotState.queue.push(newMsg);
+                        // 隊列排序 (優先級高的在前)
+                        mascotState.queue.sort((a,b) => a.priority - b.priority);
+                        return;
+                    }
+
+                    _displayMascotUI(newMsg);
                 }
+
+                function _displayMascotUI(msgObj) {
+                    const b = document.getElementById('mascot-bubble');
+                    if(!b) return;
+
+                    b.style.opacity = '0';
+                    setTimeout(() => {
+                        b.innerText = msgObj.text;
+                        b.style.opacity = '1';
+                    }, 300);
+
+                    mascotState.currentMsg = msgObj;
+                    // 如果是重要訊息 (優先級 1 或 2)，啟動保留鎖
+                    if (msgObj.priority <= 2) {
+                        mascotState.lockUntil = Date.now() + MASCOT_CONFIG.QUEUE_LOCK_MS;
+                    } else {
+                        mascotState.lockUntil = 0;
+                    }
+                }
+
+                // 每秒檢查隊列與閒置狀態
                 setInterval(() => {
-                    if(Date.now() >= lockUntil && mascotQueue.length > 0) {
-                        const next = mascotQueue.shift();
-                        setMascotMsg(next.text, next.priority);
+                    const now = Date.now();
+                    
+                    // 1. 檢查鎖定是否過期，若過期則看是否有隊列待播
+                    if (now >= mascotState.lockUntil && mascotState.queue.length > 0) {
+                        const next = mascotState.queue.shift();
+                        _displayMascotUI(next);
+                    }
+
+                    // 2. 閒聊計時器 (15 分鐘無訊息則主動出聲)
+                    if (now - mascotState.lastActive >= MASCOT_CONFIG.IDLE_CHAT_INTERVAL_MS) {
+                        const randomMsg = CHAT_LIB[Math.floor(Math.random() * CHAT_LIB.length)];
+                        setMascotMsg(randomMsg, 3);
                     }
                 }, 1000);
 
                 function updateUI(d) {
-                    if(!d) return;
-                    const list = document.getElementById('t-l');
-                    let h = '';
-                    const items = [
-                        ...(d.todayReminders || []).map(r=>({...r, type:'rem'})), 
-                        ...(d.localTasks || []).map(t=>({...t, type:'task'}))
-                    ];
-                    
-                    // 排序：待辦置頂，已完成沉底
-                    items.sort((a,b) => (a.status==='pending'? -1 : 1));
-                    
-                    if(items.length > 0) {
-                        items.forEach(i => {
-                            const isC = i.status === 'completed';
-                            h += '<div class="task-item '+(isC?'completed':'')+'" id="node-'+i.id+'">';
-                            h += '<span>'+(isC?'✅':'📌')+' '+i.title+'</span>';
-                            h += '<button class="task-btn" onclick="toggleTask('+i.id+', \\''+(isC?'pending':'completed')+'\\', \\''+i.type+'\\')">'+(isC?'↺':'✓')+'</button>';
-                            h += '</div>';
-                        });
-                        list.innerHTML = h;
-                    } else {
-                        list.innerHTML = '<div style="text-align:center; color:#ccc; padding:20px;">今日暫無待辦事項 ✨</div>';
-                    }
-                }
-
-                async function toggleTask(id, status, type) {
-                    // 樂觀更新
-                    const node = document.getElementById('node-'+id);
-                    if(node) {
-                        const isDone = status==='completed';
-                        node.classList.toggle('completed', isDone);
-                        node.querySelector('span').innerText = (isDone?'✅':'📌') + ' ' + node.querySelector('span').innerText.substring(2);
-                        node.querySelector('button').innerText = isDone?'↺':'✓';
-                    }
-                    setMascotMsg(status==='completed' ? '又解決了一件，太棒了！✨' : '已為您把任務標記為待辦。');
-                    if(type==='rem') {
-                        if(status==='completed') await window.reminderAPI.complete(id);
-                        else await window.reminderAPI.undo(id);
-                    } else {
-                        await window.reminderAPI.updateLocalTask(id, status);
-                    }
-                    window.reminderAPI.refreshStats({isManual:false});
-                }
-
-                async function doCheckin() { 
-                    setMascotMsg('正在為您打卡...🚀'); 
-                    const btn = document.getElementById('checkin-btn');
-                    if(btn) btn.disabled = true;
                     try {
-                        const r = await window.reminderAPI.directCheckin(); 
-                        setMascotMsg(r.success ? '打卡成功！✨ 辛苦了。' : '糟糕，打卡失敗：' + r.message); 
-                    } catch(e) {}
-                    setTimeout(() => { if(btn) btn.disabled = false; window.reminderAPI.refreshStats({isManual:false}); }, 3000);
+                        if (!d) { logDebug('updateUI 收到空數據'); return; }
+                        logDebug('收到更新數據，版本:' + d.version);
+                        
+                        // 更新同步時間
+                        const now = new Date();
+                        const tsStr = now.getHours().toString().padStart(2, '0') + ':' + 
+                                      now.getMinutes().toString().padStart(2, '0') + ':' + 
+                                      now.getSeconds().toString().padStart(2, '0');
+                        const tsEl = document.getElementById('sync-ts');
+                        if (tsEl) tsEl.innerText = '最後更新: ' + tsStr;
+
+                        // [v1.16.2] 即時更新 iCloud 燈號
+                        const icStat = document.getElementById('icloud-status-bar');
+                        if (icStat && d.icloudConnected !== undefined) {
+                            const isOnline = d.icloudConnected;
+                            const hasUrl = !!d.icloudUrl;
+                            let s = '<span class="status-dot ' + (isOnline ? 'online' : 'offline') + '"></span>';
+                            let t = isOnline ? 'iCloud 已連線' : (hasUrl ? 'iCloud 已設定' : '❌ iCloud 網址未設定');
+                            icStat.innerHTML = s + ' ' + t;
+                        }
+
+                        // 更新核心三項數據
+                        const sw = document.getElementById('stat-work');
+                        const sl = document.getElementById('stat-leisure');
+                        const so = document.getElementById('stat-other');
+                        if(sw) sw.innerText = d.workTime;
+                        if(sl) sl.innerText = d.leisureTime;
+                        if(so) so.innerText = d.otherTime;
+
+                        // 更新進度條
+                        const r = d.productivityRate || 0;
+                        const pf = document.getElementById('p-f');
+                        const pt = document.getElementById('p-t');
+                        if (pf) pf.style.width = r + '%';
+                        if (pt) pt.innerText = '當前生產力：' + r + '%';
+
+                        // [v1.18.2] 重要：更新打卡資訊 (防禦性更新，避免空資料洗掉樂觀時間)
+                        const vct = document.getElementById('val-checkin-time');
+                        const vot = document.getElementById('val-off-time');
+                        if (d.workInfo && d.workInfo.checkinTime) {
+                            if (vct) vct.innerText = d.workInfo.checkinTime;
+                        }
+                        if (d.workInfo && d.workInfo.expectedOffTime && d.workInfo.expectedOffTime !== '--:--') {
+                            if (vot) vot.innerText = d.workInfo.expectedOffTime;
+                        }
+
+                        // [v26.03.04 Fix] 動態更新排行榜
+                        const rankEl = document.getElementById('app-ranking-list');
+                        if (rankEl && d.topApps && d.topApps.length > 0) {
+                            let rh = '';
+                            d.topApps.forEach((a, i) => {
+                                const ts = a.duration_formatted || '0分';
+                                rh += '<div class="app-row">';
+                                rh += '<span style="color:#888; font-size:11px; width:25px;">' + (i+1) + '.</span>';
+                                rh += '<span style="flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:13px; color:#5d4037;">' + a.app_name + '</span>';
+                                rh += '<span style="font-weight:bold; color:#d35400; font-size:13px;">' + ts + '</span>';
+                                rh += '</div>';
+                            });
+                            rankEl.innerHTML = rh;
+                        }
+
+                        // 渲染任務清單
+                        const listEl = document.getElementById('t-l');
+                        if (listEl) {
+                            let h = '';
+                            const rems = d.todayReminders || [];
+                            const tasks = d.localTasks || [];
+                            
+                            // 數據過濾：過濾掉重複或無效數據
+                            const allItems = [
+                                ...rems.map(r => ({...r, type: 'rem'})),
+                                ...tasks.map(t => ({...t, type: 'task', status: t.status.toLowerCase()}))
+                            ];
+                            
+                            if (allItems.length > 0) {
+                                document.getElementById('task-center-card').style.display = 'block';
+                                
+                                // [v1.16.7] 強化排序：未完成 (pending) 置頂，已完成 (completed) 沉底
+                                allItems.sort((a, b) => {
+                                    const aP = a.status === 'pending';
+                                    const bP = b.status === 'pending';
+                                    if (aP && !bP) return -1;
+                                    if (!aP && bP) return 1;
+                                    return 0;
+                                });
+
+                                allItems.forEach(item => {
+                                    const isC = item.status === 'completed';
+                                    h += '<div class="task-item ' + (isC ? 'completed' : '') + '" id="task-node-' + item.id + '" style="' + (isC ? 'opacity:0.6; background:#f8fafc;' : '') + '">';
+                                    
+                                    // 視覺對齊：已完成顯示綠色打勾與文字淡化
+                                    if (item.type === 'rem') {
+                                        let titleH = '<div style="display:flex; flex-direction:column; gap:2px; flex:1;">';
+                                        titleH += '<span class="task-title" style="' + (isC ? 'color:#94a3b8; text-decoration:line-through;' : '') + '">' + (isC ? '✅' : (item.icon || '⏰')) + ' ' + item.title + '</span>';
+                                        if (item.message && !isC) {
+                                            titleH += '<span style="font-size:11px; color:#64748b; margin-left:22px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:280px;" title="'+item.message+'">' + item.message + '</span>';
+                                        }
+                                        titleH += '</div>';
+                                        h += titleH;
+                                        h += isC ? '<button class="task-btn done" onclick="undoTask(event,\\''+item.id+'\\')">↺</button>' : '<button class="task-btn" onclick="completeTask(event,\\''+item.id+'\\',\\''+item.title+'\\')">✓</button>';
+                                    } else {
+                                        h += '<span class="task-title" style="flex:1; ' + (isC ? 'color:#94a3b8; text-decoration:line-through;' : '') + '">' + (isC ? '✅' : '📌') + ' ' + item.title + '</span>';
+                                        h += '<button class="task-btn ' + (isC ? 'done' : '') + '" onclick="toggleTask(event,'+item.id+',\\''+(isC?'pending':'completed')+'\\')">' + (isC ? '↺' : '✓') + '</button>';
+                                    }
+                                    h += '</div>';
+                                });
+                                listEl.innerHTML = h;
+                            } else {
+                                listEl.innerHTML = '<div style="text-align:center; color:#ccc; font-size:13px; padding:20px;">今日暫無待辦事項 ✨</div>';
+                            }
+                        }
+                    } catch (ex) {
+                        logDebug('updateUI 崩潰: ' + ex.message);
+                    }
                 }
 
-                window.onload = () => { 
-                    if(window.reminderAPI) {
-                        window.reminderAPI.onUpdateStats(updateUI); 
-                        window.reminderAPI.refreshStats({isManual:true}); 
-                        // 原 60s 定時刷新已由 3min Firebase 心跳與手動觸發取代，故移除。
+                async function doCheckin(e) {
+                    if (e) e.stopPropagation();
+                    logDebug('點擊打卡按鈕');
+                    const btn = document.getElementById('checkin-btn');
+                    if (btn) { 
+                        btn.disabled = true; 
+                        btn.innerHTML = '⏳ 打卡傳送中...'; 
+                    }
+                    
+                    // [v1.14.4] 計畫對齊：點擊瞬間氣泡播報
+                    setMascotMsg('正在為您打卡...🚀');
+
+                    try {
+                        const r = await window.reminderAPI.directCheckin();
+                        if (r && r.success) {
+                            setMascotMsg('打卡成功！✨ 辛苦了，又是活力滿滿的一天。', 2);
+                            if (btn) {
+                                btn.innerHTML = '✨ 打卡成功';
+                            }
+                        } else {
+                            setMascotMsg('糟糕，打卡失敗了：' + (r?r.message:'伺服器未回應'), 2);
+                            if (btn) { btn.disabled = false; btn.innerHTML = '✅ 打卡'; }
+                        }
+                        
+                        // [v1.18.4] 統一於此處恢復按鈕並刷新，移除重複定義
+                        setTimeout(() => {
+                            if (btn) {
+                                btn.disabled = false;
+                                btn.innerHTML = '✅ 打卡';
+                            }
+                            window.reminderAPI.refreshStats({ isManual: false });
+                        }, 3000);
+                        
+                    } catch (ex) {
+                        logDebug('打卡出錯: ' + ex.message);
+                        if (btn) { btn.disabled = false; btn.innerHTML = '✅ 打卡'; }
+                    }
+                }
+
+                async function toggleTask(e,id,s) { 
+                    setMascotMsg((s.toLowerCase() === 'completed') ? '又解決了一件待辦，做得好！✨' : '已為您把任務重新標記為待處理。');
+                    await window.reminderAPI.updateLocalTask(id, s); 
+                    window.reminderAPI.refreshStats({isManual:true}); 
+                }
+                async function undoTask(e,id) { 
+                    setMascotMsg('任務已撤銷，隨時可以再次挑戰！🚀');
+                    // [v1.16.4] 撤銷樂觀更新
+                    const node = document.getElementById('task-node-' + id);
+                    if (node) {
+                        node.classList.remove('completed');
+                        const btn = node.querySelector('.task-btn');
+                        if (btn) btn.innerHTML = '✓';
+                    }
+                    await window.reminderAPI.undo(id); 
+                    window.reminderAPI.refreshStats({isManual:true}); 
+                }
+                const SUCCESS_GREETINGS = [
+                    '太棒了！又完成了一項：「{t}」🎉',
+                    '漂亮！「{t}」已解決，您真是進度殺手 💪',
+                    '「{t}」達成！離今天的全點亮目標又近了一步 ✨',
+                    '做得好！「{t}」順利完成，要稍微喝口水休息一下嗎？☕',
+                    '神級效率！「{t}」完成，今天的工作節奏太讚了 📈',
+                    '又解決了一件麻煩事：「{t}」，感覺空氣都清新了點 😊'
+                ];
+
+                async function completeTask(e,id,t) { 
+                    const randomGreet = SUCCESS_GREETINGS[Math.floor(Math.random() * SUCCESS_GREETINGS.length)]
+                        .replace('{t}', t);
+                    setMascotMsg(randomGreet);
+                    
+                    // [v1.16.3] 樂觀更新：立即變更樣式，消滅反應遲鈍感
+                    const node = document.getElementById('task-node-' + id);
+                    if (node) {
+                        node.classList.add('completed');
+                        const btn = node.querySelector('.task-btn');
+                        if (btn) btn.innerHTML = '↺'; 
+                    }
+                    await window.reminderAPI.complete(id); 
+                    window.reminderAPI.refreshStats({isManual:true}); 
+                }
+
+                window.onload = () => {
+                    logDebug('視窗載入完成 (window.onload)');
+                    if (window.reminderAPI) {
+                        logDebug('reminderAPI 已就緒');
+                        window.reminderAPI.onUpdateStats((d) => updateUI(d));
+                        
+                        // [v1.15.8] 監聽提醒狀態主動刷新 (修復點擊已完成不轉跳問題)
+                        if (window.reminderAPI.onReminderStatusUpdated) {
+                            window.reminderAPI.onReminderStatusUpdated((id) => {
+                                logDebug('收到提醒狀態變動信號: ' + id);
+                                window.reminderAPI.refreshStats({ isManual: false });
+                            });
+                        }
+
+                        // [v1.17.4] 監聽小助手對話推送 (MDQ 串接)
+                        if (window.reminderAPI.onPushMascotMsg) {
+                            window.reminderAPI.onPushMascotMsg((d) => {
+                                setMascotMsg(d.text, d.priority);
+                            });
+                        }
+
+                         // [v1.16.4] 強化定時器：增加安全保護與日誌發送
+                         setInterval(() => {
+                             try {
+                                 logDebug('執行 60s 定時同步');
+                                 window.reminderAPI.refreshStats({ isManual: false });
+                             } catch (e) {
+                                 logDebug('定時重新整理出錯: ' + e.message);
+                             }
+                         }, 60000);
+
+                        // [v1.18.4] 監聽里程碑達成
+                        if (window.reminderAPI.onMilestoneReached) {
+                            window.reminderAPI.onMilestoneReached((d) => {
+                                logDebug('達成里程碑: ' + d.count);
+                                setMascotMsg(d.icon + ' ' + d.message, 2); // 優先級 2: 操作反饋
+                            });
+                        }
+                        
+                        // 初始刷新
+                        setTimeout(() => window.reminderAPI.refreshStats({ isManual: true }), 1000);
+                    } else {
+                        logDebug('錯誤: 找不到 reminderAPI (preload 可能失效)');
                     }
                 };
-            </script></body></html>`;
+            </script>
+        </body>
+        </html>`;
     }
 
-    formatMinutes(m) { m = Math.round(m || 0); if(!m) return '0分'; if(m < 60) return m + '分'; return Math.floor(m / 60) + 'h ' + (m % 60) + 'm'; }
+    formatMinutes(m) { m = Math.round(m || 0); if (!m) return '0分'; if (m < 60) return m + '分'; return Math.floor(m / 60) + 'h ' + (m % 60) + 'm'; }
 }
 
 module.exports = { MonitorService };

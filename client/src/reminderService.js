@@ -1383,6 +1383,15 @@ class ReminderService {
         const now = new Date();
         const todayStr = this._formatDate(now);
 
+        // [v2.3.3] 內部通訊動態過濾：改為比對員工資料表 (ApiBridge 緩存)
+        const isInternal = this.apiBridge.isEmployee(notification.senderName, notification.senderUid) ||
+                          notification.title.includes('系統通知');
+
+        if (isInternal) {
+            console.log(`[Reminder] 已動態過濾內部通訊: ${notification.senderName} [${notification.senderUid}]`);
+            return;
+        }
+
         // 1. 查找是否存在同一客戶且未處理的訊息 (聚合邏輯)
         let existingId = null;
         for (const [id, status] of Object.entries(this.todayStatus)) {

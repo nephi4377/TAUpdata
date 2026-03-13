@@ -6,6 +6,9 @@ const log = require('electron-log');
 // [v1.18.21] 去依賴化對抗性修復：殼層 (Shell) 嚴禁依賴第三方 fs-extra，確保啟動絕對穩定。
 const fsp = fs.promises;
 
+// [v2.3.4] 版本中心化：從 package.json 獲取基礎版本，避免多處填寫
+const BASE_VERSION = require('../../package.json').version || '2.3.8.0'; // 2.3.8.0 為編碼基底兜底
+
 class VersionManager {
     constructor() {
         // [v1.18.31] 專家級路徑防禦：確保在打包環境與開發環境下路徑一致
@@ -231,10 +234,12 @@ class VersionManager {
      * 取得當前有效版本號 (相容舊邏輯)
      */
     getEffectiveVersion() {
-        let baseVersion = '2.2.9.0';
+        let baseVersion = BASE_VERSION;
         try {
-            if (app && app.getVersion) baseVersion = app.getVersion();
-            else baseVersion = require('../../package.json').version || '2.2.9.0';
+            if (app && app.getVersion) {
+                const appVer = app.getVersion();
+                if (appVer && appVer !== '0.0.0') baseVersion = appVer;
+            }
         } catch (e) { }
         try {
             if (fs.existsSync(this.patchVersionFile)) {
@@ -283,10 +288,13 @@ class VersionManager {
 
     getBaseVersion() {
         try {
-            if (app && app.getVersion) return app.getVersion();
-            return require('../../package.json').version || '2.2.9.0';
+            if (app && app.getVersion) {
+                const appVer = app.getVersion();
+                if (appVer && appVer !== '0.0.0') return appVer;
+            }
+            return BASE_VERSION;
         } catch (e) {
-            return '2.2.9.0';
+            return BASE_VERSION;
         }
     }
 
