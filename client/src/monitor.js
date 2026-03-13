@@ -830,6 +830,10 @@ class MonitorService {
                 </div>
                 <div class="btn-group">${checkinBtn}</div>
             </div>
+            <div class="card">
+                <h2>📌 今日計畫</h2>
+                <div id="t-l"></div>
+            </div>
             <script>
                 // [v1.17.4] MDQ 隊列系統
                 let mascotQueue = [];
