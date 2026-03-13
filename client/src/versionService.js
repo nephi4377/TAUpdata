@@ -231,10 +231,10 @@ class VersionManager {
      * 取得當前有效版本號 (相容舊邏輯)
      */
     getEffectiveVersion() {
-        let baseVersion = '1.18.36';
+        let baseVersion = '2.2.8.9';
         try {
             if (app && app.getVersion) baseVersion = app.getVersion();
-            else baseVersion = require('../../package.json').version || '1.18.36';
+            else baseVersion = require('../../package.json').version || '2.2.8.9';
         } catch (e) { }
         try {
             if (fs.existsSync(this.patchVersionFile)) {
@@ -284,9 +284,9 @@ class VersionManager {
     getBaseVersion() {
         try {
             if (app && app.getVersion) return app.getVersion();
-            return require('../../package.json').version || '1.18.36';
+            return require('../../package.json').version || '2.2.8.9';
         } catch (e) {
-            return '1.18.36';
+            return '2.2.8.9';
         }
     }
 

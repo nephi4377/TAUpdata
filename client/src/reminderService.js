@@ -788,9 +788,18 @@ class ReminderService {
                         }
                     };
 
-                    document.getElementById('btn-complete').addEventListener('click', () => callAPI('complete', '${reminder.id}'));
-                    document.getElementById('btn-snooze').addEventListener('click', () => callAPI('snooze', '${reminder.id}'));
-                    document.getElementById('btn-close').addEventListener('click', () => callAPI('close'));
+                    document.getElementById('btn-complete').addEventListener('click', () => {
+                        callAPI('complete', '${reminder.id}');
+                        window.close(); // 強制關閉
+                    });
+                    document.getElementById('btn-snooze').addEventListener('click', () => {
+                        callAPI('snooze', '${reminder.id}');
+                        window.close(); // 強制關閉
+                    });
+                    document.getElementById('btn-close').addEventListener('click', () => {
+                        callAPI('close');
+                        window.close(); // 強制關閉
+                    });
 
                     // 18 秒後自動關閉
                     setTimeout(() => {
