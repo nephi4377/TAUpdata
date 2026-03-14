@@ -382,7 +382,8 @@ class AppCore {
             'get-top-apps', 'open-data-folder', 'admin-login-verify',
             'fetch-team-status', 'fetch-history-data', 'open-link-window', 'open-dashboard-window',
             'get-local-tasks', 'add-local-task', 'update-local-task', 'delete-local-task',
-            'get-icloud-events', 'direct-checkin', 'reminder-complete', 'reminder-undo', 'reminder-snooze'
+            'get-icloud-events', 'direct-checkin', 'reminder-complete', 'reminder-undo', 'reminder-snooze',
+            'get-icloud-url', 'save-icloud-url'
         ];
         channels.forEach(ch => {
             try { ipcMain.removeHandler(ch); } catch (e) { }
@@ -479,6 +480,20 @@ class AppCore {
         ipcMain.handle('get-icloud-events', async () => {
             if (!reminderService) return [];
             return reminderService.reminders.filter(r => r.isIcloud);
+        });
+
+        // [v2.4.0.2] iCloud 網址設定 IPC
+        ipcMain.handle('get-icloud-url', () => {
+            return configManager.getIcloudCalendarUrl();
+        });
+
+        ipcMain.handle('save-icloud-url', (e, url) => {
+            try {
+                configManager.setIcloudCalendarUrl(url);
+                return { success: true };
+            } catch (err) {
+                return { success: false, message: err.message };
+            }
         });
 
         // 打卡與統計

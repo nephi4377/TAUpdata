@@ -1,6 +1,6 @@
 {
     "name": "tienxin-productivity-assistant",
-    "version": "2.4.0.1",
+    "version": "2.5.0.0",
     "description": "添心生產力助手 - 智能工作追蹤與提醒系統 (V2 Immutable Core)",
     "main": "main.js",
     "repository": {
