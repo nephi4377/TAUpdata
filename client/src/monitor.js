@@ -809,9 +809,17 @@ class MonitorService {
         const workInfo = cfg.getTodayWorkInfo();
         if (workInfo && workInfo.checkedIn && workInfo.checkinTime && (!workInfo.expectedOffTime || workInfo.expectedOffTime === '--:--')) {
             try {
-                const [h, m] = workInfo.checkinTime.split(':').map(Number);
-                const offH = (h + 9) % 24;
-                workInfo.expectedOffTime = `${String(offH).padStart(2, '0')}:${String(m).padStart(2, '0')} (估)`;
+                const bound = cfg.getBoundEmployee();
+                if (bound && bound.shiftEnd && bound.shiftEnd !== '--:--') {
+                    // [v2.4.0.1 Fix] 優先使用員工資料表的下班時間
+                    workInfo.expectedOffTime = bound.shiftEnd;
+                } else {
+                    // [v2.4.0.1 Fallback] 若無排班資料，則使用打卡 +9 小時
+                    const [h, m] = workInfo.checkinTime.split(':').map(Number);
+                    let offH = (h + 9) % 24;
+                    const lateWarning = (offH >= 22 || offH <= 5) ? ' (深夜!)' : ' (估)';
+                    workInfo.expectedOffTime = `${String(offH).padStart(2, '0')}:${String(m).padStart(2, '0')}${lateWarning}`;
+                }
             } catch (e) { }
         }
 
@@ -955,8 +963,8 @@ class MonitorService {
             syncStatus = '<span class="status-dot offline"></span>';
             syncText = 'iCloud 已設定';
         } else {
-            syncStatus = '<span class="status-dot offline" style="background:#e74c3c;"></span>';
-            syncText = '❌ iCloud 網址未設定';
+            syncStatus = '<span class="status-dot offline" style="background:#e74c3c; box-shadow:0 0 10px rgba(231,76,60,0.5); animation: pulse 2s infinite;"></span>';
+            syncText = '<span style="color:#e74c3c; font-weight:800;">❌ iCloud 網址未設定</span>';
         }
 
         return `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>
@@ -981,7 +989,6 @@ class MonitorService {
             .task-btn.done { border-color:#94a3b8; color:#94a3b8; }
             .app-list-container { max-height:250px; overflow-y:auto; padding-right:5px; }
             .app-row { display:flex; align-items:center; padding:10px 0; border-bottom:1px solid #f1f5f9; }
-            .status-dot { width:10px; height:10px; border-radius:50%; display:inline-block; }
             .status-dot.online { background:#10b981; box-shadow:0 0 8px rgba(16,185,129,0.4); }
             .status-dot.offline { background:#94a3b8; }
         </style></head>
@@ -1044,14 +1051,14 @@ class MonitorService {
                 </div>
             </div>
 
-            <!-- 下層：提醒事項與排行 (預設顯示，確保對齊計畫書) -->
+            <!-- 下層：提醒事項與排行 (依照總監需求隱藏活躍排行) -->
             <div class="card" id="task-center-card">
                 <div id="debug-box" style="display:none; background:rgba(0,0,0,0.8); color:#0f0; font-family:monospace; font-size:10px; padding:10px; border-radius:8px; margin-bottom:10px; max-height:100px; overflow-y:auto;"></div>
                 <h2>📋 今日提醒與待辦事項</h2>
                 <div id="t-l"><div style="text-align:center; color:#ccc; font-size:14px; padding:20px;">正在加載今日計畫...</div></div>
             </div>
 
-            <div class="card">
+            <div class="card" style="display:none;">
                 <h2>📈 全量應用活躍排行</h2>
                 <div id="app-ranking-list" class="app-list-container">${appH || '<div style="text-align:center; color:#ccc; font-size:14px; padding:20px;">暫無活躍記錄</div>'}</div>
             </div>
@@ -1184,8 +1191,20 @@ class MonitorService {
                         if (icStat && d.icloudConnected !== undefined) {
                             const isOnline = d.icloudConnected;
                             const hasUrl = !!d.icloudUrl;
-                            let s = '<span class="status-dot ' + (isOnline ? 'online' : 'offline') + '"></span>';
-                            let t = isOnline ? 'iCloud 已連線' : (hasUrl ? 'iCloud 已設定' : '❌ iCloud 網址未設定');
+                            
+                            let s = '';
+                            let t = '';
+                            
+                            if (isOnline) {
+                                s = '<span class="status-dot online"></span>';
+                                t = 'iCloud 已連線';
+                            } else if (hasUrl) {
+                                s = '<span class="status-dot offline"></span>';
+                                t = 'iCloud 已設定';
+                            } else {
+                                s = '<span class="status-dot offline" style="background:#e74c3c;"></span>';
+                                t = '<span style="color:#e74c3c; font-weight:800;">❌ iCloud 網址未設定</span>';
+                            }
                             icStat.innerHTML = s + ' ' + t;
                         }
 
