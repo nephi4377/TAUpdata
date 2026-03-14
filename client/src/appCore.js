@@ -99,7 +99,9 @@ class AppCore {
 
             this.services.monitorService = new MonitorService(
                 this.services.storageService,
-                this.services.classifierService
+                this.services.classifierService,
+                this.versionService,
+                this
             );
             this.services.monitorService.setApiBridge(this.services.apiBridge);
             this.services.apiBridge.setMonitorService(this.services.monitorService);

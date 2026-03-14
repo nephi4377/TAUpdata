@@ -7,9 +7,11 @@ const https = require('https');
 let activeWin = null;
 
 class MonitorService {
-    constructor(storageService, classifierService) {
+    constructor(storageService, classifierService, versionService, appInstance) {
         this.storageService = storageService;
         this.classifierService = classifierService;
+        this.versionService = versionService;
+        this.app = appInstance;
 
         this.isRunning = false;
 
@@ -61,6 +63,39 @@ class MonitorService {
 
     setApiBridge(apiBridge) {
         this.apiBridge = apiBridge;
+    }
+
+    /**
+     * 確保小秘書影像已下載至本地快取
+     * [v26.03.14 Adapted from TrayManager]
+     * @param {string} fname 檔案名稱
+     * @returns {Promise<string>} 本地路徑
+     */
+    async ensureMascotCached(fname) {
+        const cacheDir = path.join(app.getPath('userData'), 'mascot_cache');
+        if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
+
+        const localPath = path.join(cacheDir, fname);
+        if (fs.existsSync(localPath)) return localPath;
+
+        const url = `https://raw.githubusercontent.com/nephi4377/TAUpdata/master/client/assets/${fname}`;
+        console.log(`[Monitor] 正在下載小秘書快取: ${url}`);
+
+        return new Promise((resolve) => {
+            const file = fs.createWriteStream(localPath);
+            https.get(url, (response) => {
+                response.pipe(file);
+                file.on('finish', () => {
+                    file.close();
+                    console.log(`[Monitor] 小秘書快取下載完成: ${fname}`);
+                    resolve(localPath);
+                });
+            }).on('error', (err) => {
+                fs.unlink(localPath, () => { });
+                console.error(`[Monitor] 快取下載失敗: ${err.message}`);
+                resolve(null);
+            });
+        });
     }
 
     setReminderService(reminderService) {
@@ -424,7 +459,11 @@ class MonitorService {
         this.showToast('⚠️ 專注提醒', `已在「${appName}」停留 ${minutes} 分鐘\n休息一下吧！`);
 
         // 顯示警示視窗
-        this.app.showLeisureAlert(this.currentLeisureApp, Math.floor(minutes));
+        if (this.app && typeof this.app.showLeisureAlert === 'function') {
+            this.app.showLeisureAlert(this.currentLeisureApp, Math.floor(minutes));
+        } else {
+            console.warn('[Monitor] appInstance 未設置或不具備 showLeisureAlert 方法');
+        }
 
         this.leisureAlertShown = true;
         this.leisureAlertCooldown = true;
@@ -776,14 +815,7 @@ class MonitorService {
             } catch (e) { }
         }
 
-        let effectiveVersionStr = 'Unknown';
-        try {
-            // [v2.0.11] 防禦性載入 versionService，因為它已經被移至 app.asar
-            const vSvc = require('./versionService').versionService || require('../src/versionService').versionService || require(path.join(process.cwd(), 'resources/app.asar/src/versionService')).versionService;
-             if(vSvc) effectiveVersionStr = vSvc.getEffectiveVersion();
-        } catch(e) {
-             console.warn('[Monitor] 此環境無法獲取版號:', e.message);
-        }
+        const effectiveVersionStr = this._getSafeVersion();
 
         return {
             version: effectiveVersionStr,
@@ -826,7 +858,8 @@ class MonitorService {
 
     async showStatsWindow(configManager, reminderService, isManual = true) {
         try {
-            console.log('[Monitor] 極速啟動統計中心 (Memory-Inject Mode)...');
+            const currentVersion = this._getSafeVersion();
+            console.log(`[Monitor] 極速啟動統計中心 (v${currentVersion})...`);
 
             if (this.statsWindow && !this.statsWindow.isDestroyed()) {
                 const data = await this.getStatsData(configManager, reminderService);
@@ -839,7 +872,7 @@ class MonitorService {
             }
 
             this.statsWindow = new BrowserWindow({
-                width: 720, height: 880, title: `添心統計中心 (v${this.versionService.getEffectiveVersion()})`,
+                width: 720, height: 880, title: `添心統計中心 (v${currentVersion})`,
                 autoHideMenuBar: true, show: false,
                 webPreferences: { contextIsolation: true, preload: path.join(__dirname, 'reminderPreload.js') }
             });
@@ -1380,6 +1413,33 @@ class MonitorService {
             </script>
         </body>
         </html>`;
+    }
+
+    // [v2.3.4.2] 安全版本獲取：整合防禦性 require 邏輯，避免視窗因 versionService 缺失崩潰
+    _getSafeVersion() {
+        try {
+            // 嘗試從注入的 service 獲取
+            if (this.versionService && typeof this.versionService.getEffectiveVersion === 'function') {
+                return this.versionService.getEffectiveVersion();
+            }
+            // 嘗試多路徑 require (防禦打包環境)
+            const paths = [
+                './versionService',
+                '../src/versionService',
+                path.join(process.cwd(), 'resources/app.asar/src/versionService')
+            ];
+            for (const p of paths) {
+                try {
+                    const vSvc = require(p).versionService;
+                    if (vSvc && typeof vSvc.getEffectiveVersion === 'function') {
+                        return vSvc.getEffectiveVersion();
+                    }
+                } catch (e) { }
+            }
+        } catch (e) {
+            console.warn('[Monitor] _getSafeVersion 發生預期外錯誤:', e.message);
+        }
+        return '2.3.4.1'; // 最終保底
     }
 
     formatMinutes(m) { m = Math.round(m || 0); if (!m) return '0分'; if (m < 60) return m + '分'; return Math.floor(m / 60) + 'h ' + (m % 60) + 'm'; }
