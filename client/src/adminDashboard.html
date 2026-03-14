@@ -309,19 +309,7 @@
             <input type="date" id="end-date">
             <input type="text" id="history-filter" placeholder="搜尋姓名..." oninput="filterHistoryTable()">
             <button class="btn" onclick="loadHistory()">🔍 查詢報表</button>
-            <button class="btn btn-outline" onclick="toggleSettings()" style="margin-left:auto">⚙️ 系統設定</button>
             <button class="btn btn-outline" onclick="resetFocus()">🌍 顯示全部概觀</button>
-        </div>
-
-        <div id="settings-panel" class="controls" style="display: none; flex-direction: column; align-items: flex-start; border: 1px solid var(--primary-color);">
-            <h4 style="margin: 0 0 12px 0;">iCloud 行事曆設定</h4>
-            <div style="display: flex; gap: 8px; width: 100%;">
-                <input type="text" id="icloud-url" placeholder="請輸入 iCloud 公開訂閱網址 (webcal://...)" style="flex: 1;">
-                <button class="btn" onclick="saveIcloudUrl()">💾 儲存網址</button>
-            </div>
-            <p style="font-size: 11px; color: var(--text-secondary); margin: 8px 0 0 0;">
-                提示：若網址為空或讀取失敗，系統將自動恢復為 ConfigManager 中的預設網址。
-            </p>
         </div>
 
         <div class="summary-cards">
@@ -378,27 +366,10 @@
             loadSettings();
         });
 
-        function loadSettings() {
-            ipcRenderer.invoke('get-icloud-url').then(url => {
-                document.getElementById('icloud-url').value = url || '';
-            });
-        }
-
-        function toggleSettings() {
-            const panel = document.getElementById('settings-panel');
-            panel.style.display = panel.style.display === 'none' ? 'flex' : 'none';
-        }
-
-        function saveIcloudUrl() {
-            const url = document.getElementById('icloud-url').value;
-            ipcRenderer.invoke('save-icloud-url', url).then(res => {
-                if (res.success) {
-                    alert('iCloud 網址已儲存，請重新啟動統計中心以套用變動。');
-                } else {
-                    alert('儲存失敗: ' + res.message);
-                }
-            });
-        }
+        window.addEventListener('load', () => {
+            initDefaults();
+            loadHistory();
+        });
 
         function initDefaults() {
             const today = new Date().toISOString().split('T')[0];

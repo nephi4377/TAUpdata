@@ -136,9 +136,10 @@ class TrayManager {
     // [還原] 整合主控台連結
     template.push({ label: '🖥️ 開啟整合主控台', click: () => { shell.openExternal('https://info.tanxin.space/index.html'); } });
 
-    // 管理員與設定
-    if (this.configManager.isAdmin()) {
-      template.push({ label: '⚙️ 管理員主控台', click: () => this.adminDashboard?.show() });
+    // [v2.5.2.0] 管理員與設定：僅限權限 Level 5 (修復邏輯：主面板按鈕與右鍵選單分離)
+    const isAdminUser = bound && parseInt(bound.permission || 0) >= 5;
+    if (isAdminUser || this.configManager.isAdmin()) {
+      template.push({ label: '⚙️ 管理員面板', click: () => this.adminDashboard?.show() });
     }
 
     // 性別設定 (僅保留男女大項)

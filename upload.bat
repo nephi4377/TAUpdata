@@ -37,8 +37,10 @@ git add .
 for /f "delims=" %%i in ('powershell -Command "(Get-Content 'client/package.json' | ConvertFrom-Json).version"') do set "VER=%%i"
 
 echo    - 目前版本: %VER% (部署時間: %TIMESTAMP%)
-git commit -m "feat(hotfix): %VER% - UID Filter, De-spam, Formula Stable at %TIMESTAMP%"
+git commit -m "chore: release v%VER% (Localized & Hourly Sync)"
 git push origin main
+git tag v%VER%
+git push origin v%VER%
 
 echo.
 echo ==================================================================

@@ -174,7 +174,7 @@ class AppCore {
             // [v1.14.0] 專家級核心定時任務：60s 自動同步全量數據與 UI
             // [v26.03.01] 核心背景同步：每 60 秒抓取雲端數據並重新渲染 UI
             this.timers.statsRefresh = setInterval(async () => {
-                console.log('[Core] 執行背景自動同步 (60s)...');
+                console.log('[Core] 執行背景自動刷新 (10min)...');
                 try {
                     // 1. 從雲端抓取最新打卡與工作資訊 (確保傳入當前 UserID)
                     const bound = this.services.configManager.getBoundEmployee();
@@ -185,13 +185,13 @@ class AppCore {
                         }
                     }
 
-                    // 2. 如果統計中心開著，推通新數據
+                    // 2. 如果統計中心開著，推送新數據
                     if (this.services.monitorService && this.services.monitorService.statsWindow) {
                         const data = await this.services.monitorService.getStatsData(this.services.configManager, this.services.reminderService);
                         this.services.monitorService.statsWindow.webContents.send('update-stats-data', data);
                     }
                 } catch (e) {
-                    console.error('[Core] 背景同步失敗:', e.message);
+                    console.error('[Core] 背景刷新失敗:', e.message);
                 }
             }, 10 * 60 * 1000); // [v26.03.04] 調優：從 1min 改為 10min，降低背景負擔
 
@@ -329,13 +329,11 @@ class AppCore {
             }
         }, 15 * 60 * 1000);
 
-        // 每天 18 點後自動檢查上傳報告
+        // [v2.5.2.0] 每小時自動上傳完整報告 (解決 18 點關機問題)
         this.timers.report = setInterval(() => {
-            const now = new Date();
-            if (now.getMinutes() === 0) {
-                this.services.apiBridge.submitTodayReport(storageService, reminderService).catch(e => console.error(e));
-            }
-        }, 60 * 1000);
+            console.log('[Core] 執行每小時自動同步任務 (Hourly Sync)...');
+            this.services.apiBridge.submitTodayReport(storageService, reminderService).catch(e => console.error('[Core] 自動上傳失敗:', e.message));
+        }, 60 * 60 * 1000);
 
         // 每 15 分鐘背景自動檢查一次更新 (v1.11.8+ 新增)
         this.timers.autoUpdateCheck = setInterval(() => {
@@ -494,6 +492,15 @@ class AppCore {
             } catch (err) {
                 return { success: false, message: err.message };
             }
+        });
+
+        // [v2.5.1.0] 提供從統計中心跳轉設定的通訊管線
+        ipcMain.handle('open-setup-window', () => {
+            if (this.services.setupWindow) {
+                this.services.setupWindow.show();
+                return { success: true };
+            }
+            return { success: false, message: '設定視窗未就緒' };
         });
 
         // 打卡與統計

@@ -91,6 +91,17 @@ class SetupWindow {
                         this.window.close();
                     }
                     resolve(null);
+                } else if (message.startsWith('SAVE_ICLOUD_URL:')) {
+                    const url = message.replace('SAVE_ICLOUD_URL:', '');
+                    console.log(`[SetupWindow] 儲存 iCloud 網址: ${url.substring(0, 30)}...`);
+                    // 執行儲存
+                    this.apiBridge.saveIcloudUrl(url).then(res => {
+                        if (res.success) {
+                            console.log('[SetupWindow] iCloud 網址儲存成功');
+                            // 立即同步更新本地 config 緩存
+                            this.config.set('icloudCalendarUrl', url);
+                        }
+                    });
                 }
             });
 
@@ -220,11 +231,11 @@ class SetupWindow {
         });
     }
 
-    // 生成設定視窗的 HTML
+    // 生成設定視窗的 HTML (v2.5.2.0 分頁式設計)
     _generateHtml(employees, mode) {
-        const title = mode === 'setup' ? '首次設定 - 選擇您的身份' : '切換使用者';
+        const title = mode === 'setup' ? '首次設定 - 選擇您的身份' : '個人設定中心';
         const currentBound = this.config.getBoundEmployee();
-        const currentInfo = currentBound ? `目前綁定：${currentBound.userName}` : '';
+        const currentIcloudUrl = this.config.getIcloudCalendarUrl() || '';
 
         // 按組別分組
         const groups = {};
@@ -241,7 +252,6 @@ class SetupWindow {
             emps.forEach(emp => {
                 const isCurrentUser = currentBound && currentBound.userId === emp.userId;
                 const badge = isCurrentUser ? '<span class="current-badge">目前</span>' : '';
-                // [v2.2.8 Fix] 補上 permission 參數
                 employeeListHtml += `
                     <div class="employee-item ${isCurrentUser ? 'current' : ''}" 
                          onclick="selectEmployee('${emp.userId}', '${emp.userName}', '${emp.shiftStart || ''}', '${emp.shiftEnd || ''}', ${emp.flexibleMinutes || 0}, '${emp.group || ''}', '${emp.permission || 0}')">
@@ -262,7 +272,7 @@ class SetupWindow {
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
         font-family: 'Microsoft JhengHei', sans-serif;
-        background: linear-gradient(135deg, #1e1e2e, #2d2d44);
+        background: #1e1e2e;
         color: #e0e0e0;
         height: 100vh;
         display: flex;
@@ -270,40 +280,49 @@ class SetupWindow {
         user-select: none;
     }
     .header {
-        padding: 20px 24px 12px;
+        padding: 20px 24px 8px;
         -webkit-app-region: drag;
+        background: #252539;
     }
-    .header h2 {
-        font-size: 18px;
-        color: #a0a0ff;
-        margin-bottom: 4px;
-    }
-    .header .subtitle {
-        font-size: 12px;
-        color: #888;
-    }
-    .current-info {
+    .header h2 { font-size: 18px; color: #a0a0ff; margin-bottom: 2px; }
+    .header .subtitle { font-size: 11px; color: #666; }
+
+    /* Tabs Styling */
+    .tabs {
+        display: flex;
+        background: #252539;
         padding: 0 24px;
-        font-size: 12px;
-        color: #fbbf24;
-        margin-bottom: 8px;
+        border-bottom: 1px solid #333;
     }
-    .employee-list {
+    .tab {
+        padding: 12px 16px;
+        font-size: 13px;
+        color: #888;
+        cursor: pointer;
+        border-bottom: 2px solid transparent;
+        transition: 0.2s;
+    }
+    .tab.active {
+        color: #6366f1;
+        border-bottom-color: #6366f1;
+        font-weight: 700;
+    }
+
+    .content-area {
         flex: 1;
         overflow-y: auto;
-        padding: 0 24px 12px;
+        padding: 16px 24px;
     }
-    .employee-list::-webkit-scrollbar { width: 6px; }
-    .employee-list::-webkit-scrollbar-track { background: transparent; }
-    .employee-list::-webkit-scrollbar-thumb { background: #444; border-radius: 3px; }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
     .group-label {
         font-size: 11px;
         color: #6366f1;
         font-weight: 600;
-        text-transform: uppercase;
-        padding: 10px 0 4px;
+        padding: 12px 0 6px;
         border-bottom: 1px solid #333;
-        margin-bottom: 4px;
+        margin-bottom: 6px;
     }
     .employee-item {
         display: flex;
@@ -312,73 +331,93 @@ class SetupWindow {
         padding: 10px 12px;
         border-radius: 8px;
         cursor: pointer;
-        transition: all 0.15s;
-        -webkit-app-region: no-drag;
+        transition: 0.2s;
+        margin-bottom: 4px;
     }
-    .employee-item:hover {
-        background: rgba(99, 102, 241, 0.15);
-    }
-    .employee-item.selected {
-        background: rgba(99, 102, 241, 0.25);
-        border: 1px solid #6366f1;
-    }
-    .employee-item.current {
-        border-left: 3px solid #fbbf24;
-    }
+    .employee-item:hover { background: rgba(99, 102, 241, 0.1); }
+    .employee-item.selected { background: rgba(99, 102, 241, 0.2); border: 1px solid #6366f1; }
+    .employee-item.current { border-left: 3px solid #fbbf24; }
+    
     .emp-info { display: flex; align-items: center; gap: 8px; }
-    .emp-name { font-size: 14px; font-weight: 500; }
-    .emp-shift { font-size: 12px; color: #888; }
-    .current-badge {
-        font-size: 10px;
-        background: #fbbf24;
-        color: #1e1e2e;
-        padding: 1px 6px;
-        border-radius: 4px;
-        font-weight: 600;
+    .emp-name { font-size: 14px; }
+    .emp-shift { font-size: 11px; color: #666; }
+
+    /* Sync Section Styling */
+    .sync-section h3 { font-size: 14px; margin-bottom: 12px; color: #a0a0ff; }
+    .input-group { margin-bottom: 20px; }
+    .input-label { font-size: 12px; color: #888; margin-bottom: 8px; display: block; }
+    input[type="text"] {
+        width: 100%;
+        padding: 12px;
+        background: #2a2a3e;
+        border: 1px solid #444;
+        border-radius: 8px;
+        color: #fff;
+        font-size: 13px;
+        outline: none;
     }
+    input:focus { border-color: #6366f1; }
+    .tip { font-size: 11px; color: #666; margin-top: 8px; line-height: 1.5; }
+
     .footer {
-        padding: 12px 24px 16px;
-        border-top: 1px solid #333;
+        padding: 16px 24px;
+        background: #252539;
         display: flex;
-        gap: 10px;
-        -webkit-app-region: no-drag;
+        gap: 12px;
     }
     button {
         flex: 1;
-        padding: 10px;
+        padding: 12px;
         border: none;
         border-radius: 8px;
         font-size: 14px;
         cursor: pointer;
         font-weight: 600;
-        transition: all 0.15s;
+        transition: 0.2s;
     }
-    .btn-confirm {
-        background: linear-gradient(135deg, #6366f1, #8b5cf6);
-        color: #fff;
+    .btn-confirm { background: linear-gradient(135deg, #6366f1, #8b5cf6); color: #fff; }
+    .btn-confirm:disabled { background: #3a3a4e; color: #666; cursor: not-allowed; }
+    .btn-cancel { background: #3a3a4e; color: #aaa; }
+    
+    .current-badge {
+        font-size: 9px; background: #fbbf24; color: #1e1e2e; padding: 1px 4px; border-radius: 3px; font-weight: 700;
     }
-    .btn-confirm:hover { opacity: 0.9; }
-    .btn-confirm:disabled {
-        background: #3a3a4e;
-        color: #666;
-        cursor: not-allowed;
-    }
-    .btn-cancel {
-        background: #3a3a4e;
-        color: #aaa;
-    }
-    .btn-cancel:hover { background: #4a4a5e; }
 </style>
 </head>
 <body>
     <div class="header">
-        <h2>🏢 ${title}</h2>
-        <div class="subtitle">添心室內裝修設計 - 生產力助手</div>
+        <h2>${title}</h2>
+        <div class="subtitle">添心生產力助手 v2.5.2.0</div>
     </div>
-    ${currentInfo ? `<div class="current-info">⚡ ${currentInfo}</div>` : ''}
-    <div class="employee-list">
-        ${employeeListHtml}
+
+    <div class="tabs">
+        <div class="tab active" onclick="switchTab('tab-identity')">👤 身分切換</div>
+        <div class="tab" onclick="switchTab('tab-sync')">📅 同步設定</div>
     </div>
+
+    <div class="content-area">
+        <!-- Tab 1: Identity Selection -->
+        <div id="tab-identity" class="tab-content active">
+            <div class="employee-list">
+                ${employeeListHtml}
+            </div>
+        </div>
+
+        <!-- Tab 2: Sync Settings -->
+        <div id="tab-sync" class="tab-content">
+            <div class="sync-section">
+                <div class="input-group">
+                    <span class="input-label">iCloud 行事曆訂閱網址</span>
+                    <input type="text" id="icloud-url" placeholder="請輸入 webcal://... 網址" value="${currentIcloudUrl}">
+                    <p class="tip">
+                        💡 貼心提醒：此網址僅儲存於本機。系統將自動從此行事曆同步您的工程排程與重要提醒。
+                    </p>
+                </div>
+                <button class="btn-confirm" onclick="saveIcloudOnly()">💾 僅儲存網址設定</button>
+            </div>
+        </div>
+    </div>
+
     <div class="footer">
         <button class="btn-cancel" onclick="cancel()">取消</button>
         <button class="btn-confirm" id="confirmBtn" disabled onclick="confirm()">請選擇員工</button>
@@ -387,17 +426,30 @@ class SetupWindow {
     <script>
         let selectedEmployee = null;
 
+        function switchTab(tabId) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            
+            event.currentTarget.classList.add('active');
+            document.getElementById(tabId).classList.add('active');
+            
+            // 如果切換到同步分頁，底部確認按鈕文字變更
+            document.getElementById('confirmBtn').style.display = (tabId === 'tab-sync') ? 'none' : 'block';
+        }
+
         function selectEmployee(userId, userName, shiftStart, shiftEnd, flexibleMinutes, group, permission) {
-            // 移除其他選中狀態
             document.querySelectorAll('.employee-item').forEach(el => el.classList.remove('selected'));
-            // 標記當前選中
             event.currentTarget.classList.add('selected');
-            
             selectedEmployee = { userId, userName, shiftStart, shiftEnd, flexibleMinutes, group, permission };
-            
             const btn = document.getElementById('confirmBtn');
             btn.disabled = false;
             btn.textContent = '確認選擇：' + userName;
+        }
+
+        function saveIcloudOnly() {
+            const url = document.getElementById('icloud-url').value;
+            // 由於 SetupWindow 未使用 preload，且 contextIsolation 為 false，我們暫時使用 console.log 協議
+            console.log('SAVE_ICLOUD_URL:' + url);
         }
 
         function confirm() {

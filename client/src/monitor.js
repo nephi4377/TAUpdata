@@ -1205,6 +1205,14 @@ class MonitorService {
                                 s = '<span class="status-dot offline" style="background:#e74c3c;"></span>';
                                 t = '<span style="color:#e74c3c; font-weight:800;">❌ iCloud 網址未設定</span>';
                             }
+                            // [v2.5.1.0] 強化 UX：讓狀態標籤可點擊，跳轉設定中心分頁
+                            icStat.style.cursor = 'pointer';
+                            icStat.title = '點擊設定 iCloud 網址';
+                            icStat.onclick = () => {
+                                if (window.reminderAPI && window.reminderAPI.openSetupWindow) {
+                                    window.reminderAPI.openSetupWindow();
+                                }
+                            };
                             icStat.innerHTML = s + ' ' + t;
                         }
 

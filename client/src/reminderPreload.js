@@ -36,6 +36,8 @@ contextBridge.exposeInMainWorld('reminderAPI', {
     onReminderStatusUpdated: (callback) => ipcRenderer.on('reminder-status-updated', (event, id) => callback(id)),
     // [v1.17.4] 監聽小助手對話推送
     onPushMascotMsg: (callback) => ipcRenderer.on('push-mascot-msg', (event, data) => callback(data)),
+    // [v2.5.1.0] 開啟設定視窗
+    openSetupWindow: () => ipcRenderer.invoke('open-setup-window'),
     // [v1.18.0] 測試火警
     testFireReminder: () => ipcRenderer.invoke('test-reminder-fire'),
     // [v1.18.4] 監聽里程碑達成
