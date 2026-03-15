@@ -962,15 +962,15 @@ class MonitorService {
         let syncText = 'iCloud 未連線';
 
         if (isIcloudOnline) {
-            syncStatus = `<span class="status-dot online" style="cursor:pointer; z-index:10; position:relative;" onclick="window.reminderAPI.promptInput({title:\'修改 iCloud 行事曆網址\', value:\'${data.icloudUrl || ''}\'})"></span>`;
-            syncText = `<span style="cursor:pointer; position:relative; z-index:10;" onclick="window.reminderAPI.promptInput({title:\'修改 iCloud 行事曆網址\', value:\'${data.icloudUrl || ''}\'})">iCloud 已連線</span>`;
+            syncStatus = `<span class="status-dot online" style="cursor:pointer; z-index:10; position:relative;" onclick="doIcloudSetup('${data.icloudUrl || ''}')"></span>`;
+            syncText = `<span style="cursor:pointer; position:relative; z-index:10;" onclick="doIcloudSetup('${data.icloudUrl || ''}')">iCloud 已連線</span>`;
         } else if (hasIcloudUrl) {
-            syncStatus = `<span class="status-dot offline" style="cursor:pointer; z-index:10; position:relative;" onclick="window.reminderAPI.promptInput({title:\'修改 iCloud 行事曆網址\', value:\'${data.icloudUrl || ''}\'})"></span>`;
-            syncText = `<span style="cursor:pointer; position:relative; z-index:10;" onclick="window.reminderAPI.promptInput({title:\'修改 iCloud 行事曆網址\', value:\'${data.icloudUrl || ''}\'})">iCloud 已設定</span>`;
+            syncStatus = `<span class="status-dot offline" style="cursor:pointer; z-index:10; position:relative;" onclick="doIcloudSetup('${data.icloudUrl || ''}')"></span>`;
+            syncText = `<span style="cursor:pointer; position:relative; z-index:10;" onclick="doIcloudSetup('${data.icloudUrl || ''}')">iCloud 已設定</span>`;
         } else {
-            // [v26.03.15.3] 頂級修復：確保 onclick 接收的是轉義後的物件字串
-            syncStatus = `<span class="status-dot offline" style="background:#e74c3c; box-shadow:0 0 10px rgba(231,76,60,0.5); animation: pulse 2s infinite; cursor:pointer; z-index:10; position:relative;" onclick="window.reminderAPI.promptInput({title:\'請輸入 iCloud 行事曆訂閱網址\', value:\'https://pXX-caldav.icloud.com/published/2/...\'})"></span>`;
-            syncText = `<span style="color:#e74c3c; font-weight:800; cursor:pointer; position:relative; z-index:10;" onclick="window.reminderAPI.promptInput({title:\'請輸入 iCloud 行事曆訂閱網址\', value:\'https://pXX-caldav.icloud.com/published/2/...\'})">❌ iCloud 網址未設定</span>`;
+            // [v26.03.15.6] 穩健方案：改用簡單的全域函式呼叫，避免 HTML 屬性轉義問題
+            syncStatus = `<span class="status-dot offline" style="background:#e74c3c; box-shadow:0 0 10px rgba(231,76,60,0.5); animation: pulse 2s infinite; cursor:pointer; z-index:10; position:relative;" onclick="doIcloudSetup('')"></span>`;
+            syncText = `<span style="color:#e74c3c; font-weight:800; cursor:pointer; position:relative; z-index:10;" onclick="doIcloudSetup('')">❌ iCloud 網址未設定</span>`;
         }
 
         return `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>
@@ -1281,27 +1281,8 @@ class MonitorService {
                             icStat.title = '點擊設定 iCloud 網址';
                             icStat.style.position = 'relative';
                             icStat.style.zIndex = '10';
-                            icStat.onclick = async () => {
-                                // [v26.03.15 UX 優化] 直接彈出置頂輸入框，免除複雜設定視窗
-                                const { response, checkboxChecked } = await window.reminderAPI.promptInput({
-                                    title: '📅 設定 iCloud 行事曆網址',
-                                    label: '請貼上您的 iCloud webcal:// 網址：',
-                                    value: d.icloudUrl || '',
-                                    placeholder: 'webcal://pXX-caldav.icloud.com/published/...'
-                                });
-                                
-                                if (response && response.trim().startsWith('webcal')) {
-                                    setMascotMsg('收到！正在為您同步雲端行事曆...✨');
-                                    const res = await window.reminderAPI.saveIcloudUrl(response.trim());
-                                    if (res.success) {
-                                        setMascotMsg('設定成功！已同步至所有設備。💪', 2);
-                                        window.reminderAPI.refreshStats({ isManual: true });
-                                    } else {
-                                        setMascotMsg('糟糕，設定失敗：' + res.message, 2);
-                                    }
-                                } else if (response !== null) {
-                                    setMascotMsg('訊息：這看起來不像是正確的 iCloud 網址喔。', 2);
-                                }
+                            icStat.onclick = () => {
+                                doIcloudSetup(d.icloudUrl || '');
                             };
                             icStat.innerHTML = s + ' ' + t;
                         }
@@ -1437,6 +1418,35 @@ class MonitorService {
                     } catch (ex) {
                         logDebug('打卡出錯: ' + ex.message);
                         if (btn) { btn.disabled = false; btn.innerHTML = '✅ 打卡'; }
+                    }
+                }
+
+                // [v26.03.15.6] 常駐全域函式方案：最穩定的 iCloud 設定觸發方式
+                async function doIcloudSetup(currentUrl) {
+                    logDebug('觸發 iCloud 設定彈窗, 當前網址: ' + (currentUrl ? '已設定' : '未設定'));
+                    
+                    try {
+                        const { response } = await window.reminderAPI.promptInput({
+                            title: '📅 設定 iCloud 行事曆網址',
+                            label: '請輸入 webcal:// 訂閱網址：',
+                            value: currentUrl || '',
+                            placeholder: 'webcal://pXX-caldav.icloud.com/published/...'
+                        });
+
+                        if (response && response.trim().startsWith('webcal')) {
+                            setMascotMsg('收到！正在為您同步雲端行事曆...✨');
+                            const res = await window.reminderAPI.saveIcloudUrl(response.trim());
+                            if (res.success) {
+                                setMascotMsg('設定成功！已同步至所有設備。💪', 2);
+                                window.reminderAPI.refreshStats({ isManual: true });
+                            } else {
+                                setMascotMsg('糟糕，設定失敗：' + res.message, 2);
+                            }
+                        } else if (response !== null) {
+                            setMascotMsg('這看起來不像是正確的 iCloud 網址喔。', 2);
+                        }
+                    } catch (ex) {
+                        logDebug('iCloud 設定報錯: ' + ex.message);
                     }
                 }
 
