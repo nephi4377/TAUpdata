@@ -962,12 +962,13 @@ class MonitorService {
         let syncText = 'iCloud 未連線';
 
         if (isIcloudOnline) {
-            syncStatus = `<span class="status-dot online" style="cursor:pointer;" onclick="window.reminderAPI.promptInput('修改 iCloud 行事曆網址', '${data.icloudUrl}')"></span>`;
-            syncText = `<span style="cursor:pointer;" onclick="window.reminderAPI.promptInput('修改 iCloud 行事曆網址', '${data.icloudUrl}')">iCloud 已連線</span>`;
+            syncStatus = `<span class="status-dot online" style="cursor:pointer;" onclick="window.reminderAPI.promptInput('修改 iCloud 行事曆網址', '${data.icloudUrl || ''}')"></span>`;
+            syncText = `<span style="cursor:pointer;" onclick="window.reminderAPI.promptInput('修改 iCloud 行事曆網址', '${data.icloudUrl || ''}')">iCloud 已連線</span>`;
         } else if (hasIcloudUrl) {
-            syncStatus = `<span class="status-dot offline" style="cursor:pointer;" onclick="window.reminderAPI.promptInput('修改 iCloud 行事曆網址', '${data.icloudUrl}')"></span>`;
-            syncText = `<span style="cursor:pointer;" onclick="window.reminderAPI.promptInput('修改 iCloud 行事曆網址', '${data.icloudUrl}')">iCloud 已設定</span>`;
+            syncStatus = `<span class="status-dot offline" style="cursor:pointer;" onclick="window.reminderAPI.promptInput('修改 iCloud 行事曆網址', '${data.icloudUrl || ''}')"></span>`;
+            syncText = `<span style="cursor:pointer;" onclick="window.reminderAPI.promptInput('修改 iCloud 行事曆網址', '${data.icloudUrl || ''}')">iCloud 已設定</span>`;
         } else {
+            // [v26.03.15.1] 針對紅色警告內容增加強化點擊
             syncStatus = `<span class="status-dot offline" style="background:#e74c3c; box-shadow:0 0 10px rgba(231,76,60,0.5); animation: pulse 2s infinite; cursor:pointer;" onclick="window.reminderAPI.promptInput('請輸入 iCloud 行事曆訂閱網址', 'https://pXX-caldav.icloud.com/published/2/...')"></span>`;
             syncText = `<span style="color:#e74c3c; font-weight:800; cursor:pointer;" onclick="window.reminderAPI.promptInput('請輸入 iCloud 行事曆訂閱網址', 'https://pXX-caldav.icloud.com/published/2/...')">❌ iCloud 網址未設定</span>`;
         }

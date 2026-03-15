@@ -128,11 +128,17 @@ class KnowledgeBaseService {
      */
     search(query) {
         if (!query) return [];
+        // [v26.03.15.1] 防禦性檢查：確保 articles 已初始化
+        if (!this.articles || !Array.isArray(this.articles)) {
+            console.warn('[KB] 搜尋失敗：知識庫尚未就緒');
+            return [];
+        }
+
         const q = query.toLowerCase().trim();
         return this.articles.filter(art => {
-            const inTitle = art.title.toLowerCase().includes(q);
-            const inBody = art.body.toLowerCase().includes(q);
-            const inKeywords = art.keywords.some(k => k.toLowerCase().includes(q));
+            const inTitle = (art.title || '').toLowerCase().includes(q);
+            const inBody = (art.body || '').toLowerCase().includes(q);
+            const inKeywords = (art.keywords || []).some(k => (k || '').toLowerCase().includes(q));
             return inTitle || inBody || inKeywords;
         }).map(art => ({
             title: art.title,
