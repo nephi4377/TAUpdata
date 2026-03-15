@@ -41,5 +41,9 @@ contextBridge.exposeInMainWorld('reminderAPI', {
     // [v1.18.0] 測試火警
     testFireReminder: () => ipcRenderer.invoke('test-reminder-fire'),
     // [v1.18.4] 監聽里程碑達成
-    onMilestoneReached: (callback) => ipcRenderer.on('milestone-reached', (event, data) => callback(data))
+    onMilestoneReached: (callback) => ipcRenderer.on('milestone-reached', (event, data) => callback(data)),
+    // [v2.5.3] 快速搜尋知識庫
+    searchKB: (query) => ipcRenderer.invoke('kb:search', query),
+    // [v26.03.15] 快速輸入對話框
+    promptInput: (options) => ipcRenderer.invoke('prompt-input', options)
 });

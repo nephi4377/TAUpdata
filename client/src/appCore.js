@@ -82,6 +82,7 @@ class AppCore {
             const { versionService } = this.hotReloader.loadModuleSafely('versionService', './src/versionService');
             const ReporterService = this.hotReloader.loadModuleSafely('reporter', './src/reporter').ReporterService;
             const FirebaseService = this.hotReloader.loadModuleSafely('firebaseService', './src/firebaseService').FirebaseService;
+            const { KnowledgeBaseService } = this.hotReloader.loadModuleSafely('kbService', './src/kbService');
 
             // 2. 實例化並儲存服務
             this.services.configManager = new ConfigManager();
@@ -148,6 +149,13 @@ class AppCore {
             this.services.firebaseService = new FirebaseService(this.services.configManager, this.services.reminderService, this.services.monitorService);
             await this.services.firebaseService.init(); // [核心修正] 呼叫 init 啟動監聽器
 
+            // [v2.5.3] 百科知識庫服務 (Google Sheets 雲端版)
+            this.services.knowledgeBaseService = new KnowledgeBaseService();
+            // [v26.03.15] 啟動時同步雲端法規數據
+            this.services.knowledgeBaseService.loadKnowledgeBase().catch(e => {
+                console.error('[Core] 百科初始同步失敗:', e.message);
+            });
+
             await this.initializeCheckinIntegration();
 
             this.setupIpcHandlers();
@@ -179,9 +187,15 @@ class AppCore {
                     // 1. 從雲端抓取最新打卡與工作資訊 (確保傳入當前 UserID)
                     const bound = this.services.configManager.getBoundEmployee();
                     if (bound && bound.userId) {
-                        const newWi = await this.services.apiBridge.getWorkInfo(bound.userId);
-                        if (newWi && newWi.success) {
-                            this.handleWorkInfoUpdate(newWi.data);
+                        // [v26.03.15 專家級優化] 本地優先策略：若已打卡，則不再向後端重複請求以避免空窗期覆蓋
+                        const currentWi = this.services.configManager.getTodayWorkInfo();
+                        if (currentWi && currentWi.checkedIn) {
+                            console.log('[Core] 本地已獲取打卡資訊，略過背景自動刷新。');
+                        } else {
+                            const newWi = await this.services.apiBridge.getWorkInfo(bound.userId);
+                            if (newWi && newWi.success) {
+                                this.handleWorkInfoUpdate(newWi.data);
+                            }
                         }
                     }
 
@@ -381,7 +395,7 @@ class AppCore {
             'fetch-team-status', 'fetch-history-data', 'open-link-window', 'open-dashboard-window',
             'get-local-tasks', 'add-local-task', 'update-local-task', 'delete-local-task',
             'get-icloud-events', 'direct-checkin', 'reminder-complete', 'reminder-undo', 'reminder-snooze',
-            'get-icloud-url', 'save-icloud-url'
+            'get-icloud-url', 'save-icloud-url', 'prompt-input'
         ];
         channels.forEach(ch => {
             try { ipcMain.removeHandler(ch); } catch (e) { }
@@ -475,6 +489,11 @@ class AppCore {
             return false;
         });
 
+        // [KNOWLEDGE BASE] 靜態搜尋器 MVP
+        ipcMain.handle('kb:search', async (event, query) => {
+            return this.services.knowledgeBaseService.search(query);
+        });
+
         ipcMain.handle('get-icloud-events', async () => {
             if (!reminderService) return [];
             return reminderService.reminders.filter(r => r.isIcloud);
@@ -485,9 +504,13 @@ class AppCore {
             return configManager.getIcloudCalendarUrl();
         });
 
-        ipcMain.handle('save-icloud-url', (e, url) => {
+        ipcMain.handle('save-icloud-url', async (e, url) => {
             try {
                 configManager.setIcloudCalendarUrl(url);
+                // [v26.03.15] 同時推送到雲端
+                if (this.services.firebaseService) {
+                    await this.services.firebaseService.uploadIcloudUrl(url);
+                }
                 return { success: true };
             } catch (err) {
                 return { success: false, message: err.message };
@@ -495,12 +518,46 @@ class AppCore {
         });
 
         // [v2.5.1.0] 提供從統計中心跳轉設定的通訊管線
-        ipcMain.handle('open-setup-window', () => {
-            if (this.services.setupWindow) {
-                this.services.setupWindow.show();
-                return { success: true };
-            }
-            return { success: false, message: '設定視窗未就緒' };
+        ipcMain.handle('prompt-input', async (event, { title, label, value, placeholder }) => {
+            return new Promise((resolve) => {
+                const promptWin = new BrowserWindow({
+                    width: 500, height: 200, resizable: false, frame: false, alwaysOnTop: true,
+                    center: true, backgroundColor: '#ffffff',
+                    webPreferences: { contextIsolation: false, nodeIntegration: false }
+                });
+
+                const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>
+                    body { font-family: sans-serif; padding: 25px; background: #fff; overflow: hidden; border: 2px solid #e67e22; border-radius: 12px; }
+                    h3 { margin-top: 0; color: #e67e22; font-size: 16px; -webkit-app-region: drag; }
+                    input { width: 100%; padding: 12px; border: 1.5px solid #ddd; border-radius: 8px; margin: 15px 0; font-size: 13px; outline: none; }
+                    input:focus { border-color: #e67e22; }
+                    .btns { display: flex; gap: 10px; justify-content: flex-end; }
+                    button { padding: 8px 20px; border-radius: 8px; border: none; cursor: pointer; font-weight: bold; }
+                    .ok { background: #e67e22; color: #white; }
+                    .cancel { background: #f0f0f0; color: #666; }
+                </style></head><body>
+                    <h3>${title}</h3>
+                    <div style="font-size: 13px; color: #666;">${label}</div>
+                    <input type="text" id="ipt" value="${value || ''}" placeholder="${placeholder || ''}" autofocus onkeyup="if(event.key==='Enter')confirm()">
+                    <div class="btns">
+                        <button class="cancel" onclick="console.log('CANCEL')">取消</button>
+                        <button class="ok" onclick="confirm()">儲存設定</button>
+                    </div>
+                    <script>
+                        function confirm() { console.log('OK:' + document.getElementById('ipt').value); }
+                    </script>
+                </body></html>`;
+
+                promptWin.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+                promptWin.webContents.on('console-message', (e, level, message) => {
+                    if (message === 'CANCEL') { promptWin.close(); resolve({ response: null }); }
+                    else if (message.startsWith('OK:')) {
+                        const res = message.replace('OK:', '');
+                        promptWin.close();
+                        resolve({ response: res });
+                    }
+                });
+            });
         });
 
         // 打卡與統計

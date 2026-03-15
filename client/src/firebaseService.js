@@ -77,6 +77,16 @@ class FirebaseService {
         // 監聽 notifications 節點下該使用者的子節點
         this.activeRef = ref(this.db, `notifications/${userId}`);
 
+        // [v26.03.15] 監聽 iCloud 網址雲端同步 (一處設定，處處生效)
+        const icRef = ref(this.db, 'settings/icloud_config');
+        onChildAdded(icRef, (snapshot) => this._handleIcloudSync(snapshot.val()));
+        // 同時監聽更新
+        const { onValue } = require('firebase/database');
+        onValue(icRef, (snapshot) => {
+            const val = snapshot.val();
+            if (val) this._handleIcloudSync(val);
+        });
+
         // 使用 onChildAdded 監聽新訊息
         onChildAdded(this.activeRef, (snapshot) => {
             const msg = snapshot.val();
@@ -231,6 +241,41 @@ class FirebaseService {
             // console.log(`[Firebase] 心跳已更新: ${this.activeUserId} (${status})`);
         } catch (error) {
             console.error('[Firebase] 心跳更新失敗:', error.message);
+        }
+    }
+
+    /**
+     * [v26.03.15] 處理 iCloud 網址雲端同步
+     */
+    _handleIcloudSync(data) {
+        if (!data || !data.url) return;
+        const currentUrl = this.config.getIcloudCalendarUrl();
+        if (data.url !== currentUrl) {
+            console.log(`[Firebase] 🔗 偵測到雲端 iCloud 網址變更，正在同步...`);
+            this.config.setIcloudCalendarUrl(data.url);
+            
+            // 立即觸發一次同步
+            if (this.reminderService && this.reminderService.apiBridge) {
+                this.reminderService.apiBridge.syncAllIcloudReminders(this.reminderService);
+            }
+        }
+    }
+
+    /**
+     * [v26.03.15] 將 iCloud 網址推送到雲端
+     */
+    async uploadIcloudUrl(url) {
+        if (!this.db) return;
+        try {
+            const icRef = ref(this.db, 'settings/icloud_config');
+            await set(icRef, {
+                url: url,
+                updatedAt: Date.now(),
+                updatedBy: this.config.getBoundEmployee()?.userName || '未知'
+            });
+            console.log('[Firebase] iCloud 網址已同步至雲端');
+        } catch (e) {
+            console.error('[Firebase] 雲端同步失敗:', e.message);
         }
     }
 

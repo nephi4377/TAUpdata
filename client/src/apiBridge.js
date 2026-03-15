@@ -256,18 +256,6 @@ class ApiBridge {
             };
             this.config.setTodayWorkInfo(optimisticInfo);
             this._broadcastUI();
-
-            // 2. 延遲校準：3秒後抓取 GAS 正確數據（包含預計下班時間）
-            setTimeout(async () => {
-                const refreshed = await this.refreshWorkInfo();
-                if (refreshed && refreshed.checkinTime) {
-                    console.log('[ApiBridge] 雲端校準成功');
-                } else {
-                    // 若抓不到，5秒後再試最後一次
-                    setTimeout(() => this.refreshWorkInfo().then(() => this._broadcastUI()), 5000);
-                }
-                this._broadcastUI();
-            }, 3000);
         }
 
         return result;

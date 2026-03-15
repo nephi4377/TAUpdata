@@ -933,8 +933,13 @@ class MonitorService {
         else if (rate > 0) bubbleMsg = '剛開始啟動嗎？小添陪您一起加油 📈';
 
         const checkinBtn = boundEmployee
-            ? `<button class="btn ok" onclick="doCheckin(event)" id="checkin-btn">✅ 打卡</button>
-               <button class="btn info" onclick="window.reminderAPI.openDashboardWindow()">🖥️ 主控台</button>`
+            ? `<div style="display:flex; flex-direction:column; gap:8px; width:100%;">
+                <div style="display:flex; gap:8px; width:100%;">
+                    <button class="btn ok" onclick="doCheckin(event)" id="checkin-btn" style="flex:2">✅ 打卡</button>
+                    <button class="btn info" onclick="toggleKBSearch()" style="flex:1">🔍 百科</button>
+                </div>
+                <button class="btn info" onclick="window.reminderAPI.openDashboardWindow()" style="width:100%">🖥️ 主控台</button>
+               </div>`
             : `<button class="btn" style="background:#e67e22; width:100%;" onclick="window.reminderAPI.openLinkWindow()">📲 前往綁定 (LINE)</button>`;
 
         let appH = '';
@@ -991,6 +996,20 @@ class MonitorService {
             .app-row { display:flex; align-items:center; padding:10px 0; border-bottom:1px solid #f1f5f9; }
             .status-dot.online { background:#10b981; box-shadow:0 0 8px rgba(16,185,129,0.4); }
             .status-dot.offline { background:#94a3b8; }
+
+            /* KB Search Overlay */
+            #kb-overlay { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(255,255,255,0.98); z-index:1000; padding:20px; flex-direction:column; transition:0.3s; }
+            #kb-overlay.active { display:flex; animation: fadeIn 0.2s; }
+            .kb-search-box { display:flex; gap:10px; margin-bottom:15px; }
+            .kb-input { flex:1; padding:12px 15px; border:2px solid #e2e8f0; border-radius:12px; font-size:14px; outline:none; transition:0.2s; }
+            .kb-input:focus { border-color:#3b82f6; box-shadow:0 0 0 3px rgba(59,130,246,0.1); }
+            #kb-results { flex:1; overflow-y:auto; padding-right:5px; }
+            .kb-item { background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:15px; margin-bottom:12px; cursor:pointer; transition:0.2s; }
+            .kb-item:hover { border-color:#3b82f6; transform:translateY(-2px); box-shadow:0 4px 12px rgba(0,0,0,0.05); }
+            .kb-item h3 { font-size:15px; color:#1e293b; margin-bottom:8px; display:flex; align-items:center; gap:8px; }
+            .kb-item p { font-size:13px; color:#64748b; line-height:1.6; white-space: pre-wrap; display:none; }
+            .kb-item.expanded p { display:block; border-top:1px solid #f1f5f9; margin-top:10px; padding-top:10px; }
+            @keyframes fadeIn { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
         </style></head>
         <body>
             <div class="card">
@@ -1081,6 +1100,57 @@ class MonitorService {
                     logDebug('GLOBAL ERROR: ' + msg + ' at ' + line);
                 };
 
+                // [v2.5.3 KB Search Logic]
+                async function doKBSearch() {
+                    const q = document.getElementById('kb-input').value;
+                    const resDiv = document.getElementById('kb-results');
+                    if (!q) return;
+
+                    resDiv.innerHTML = '<div style="text-align:center; padding:20px;">搜尋中...</div>';
+                    
+                    try {
+                        const results = await window.reminderAPI.searchKB(q);
+                        
+                        if (!results || results.length === 0) {
+                            resDiv.innerHTML = '<div style="text-align:center; padding:40px; color:#94a3b8;">找不到相關資料 😅</div>';
+                            return;
+                        }
+
+                        // [v26.03.15] 修復巢狀模板字串轉義錯誤，確保 KB 搜尋結果正確渲染
+                        resDiv.innerHTML = results.map(r => \`
+                            <div class="kb-item" onclick="this.classList.toggle('expanded')">
+                                <h3>📘 \${r.title}</h3>
+                                <p>\${r.content}</p>
+                            </div>
+                        \`).join('');
+                    } catch (err) {
+                        resDiv.innerHTML = '<div style="text-align:center; padding:20px; color:#e74c3c;">搜尋出錯了 ❌</div>';
+                    }
+                }
+
+                function toggleKBSearch() {
+                    const el = document.getElementById('kb-overlay');
+                    el.classList.toggle('active');
+                    if(el.classList.contains('active')) {
+                        setTimeout(() => document.getElementById('kb-input').focus(), 100);
+                    }
+                }
+
+
+                async function approveItem(item, btn) {
+                    btn.disabled = true;
+                    btn.innerText = '處理中...';
+                    try {
+                        await window.reminderAPI.approveKB(item);
+                        btn.parentElement.parentElement.style.opacity = '0.3';
+                        btn.innerText = '已入庫';
+                    } catch(err) {
+                        alert('操作失敗: ' + err.message);
+                        btn.disabled = false;
+                    }
+                }
+
+                // [v2.5.3 KB Search Logic]
                 logDebug('腳本開始載入...');
 
                 // [v1.17.4] 小助手對話隊列系統 (Mascot Dialogue Queue, MDQ)
@@ -1208,9 +1278,26 @@ class MonitorService {
                             // [v2.5.1.0] 強化 UX：讓狀態標籤可點擊，跳轉設定中心分頁
                             icStat.style.cursor = 'pointer';
                             icStat.title = '點擊設定 iCloud 網址';
-                            icStat.onclick = () => {
-                                if (window.reminderAPI && window.reminderAPI.openSetupWindow) {
-                                    window.reminderAPI.openSetupWindow();
+                            icStat.onclick = async () => {
+                                // [v26.03.15 UX 優化] 直接彈出置頂輸入框，免除複雜設定視窗
+                                const { response, checkboxChecked } = await window.reminderAPI.promptInput({
+                                    title: '📅 設定 iCloud 行事曆網址',
+                                    label: '請貼上您的 iCloud webcal:// 網址：',
+                                    value: d.icloudUrl || '',
+                                    placeholder: 'webcal://pXX-caldav.icloud.com/published/...'
+                                });
+                                
+                                if (response && response.trim().startsWith('webcal')) {
+                                    setMascotMsg('收到！正在為您同步雲端行事曆...✨');
+                                    const res = await window.reminderAPI.saveIcloudUrl(response.trim());
+                                    if (res.success) {
+                                        setMascotMsg('設定成功！已同步至所有設備。💪', 2);
+                                        window.reminderAPI.refreshStats({ isManual: true });
+                                    } else {
+                                        setMascotMsg('糟糕，設定失敗：' + res.message, 2);
+                                    }
+                                } else if (response !== null) {
+                                    setMascotMsg('訊息：這看起來不像是正確的 iCloud 網址喔。', 2);
                                 }
                             };
                             icStat.innerHTML = s + ' ' + t;
@@ -1438,6 +1525,23 @@ class MonitorService {
                     }
                 };
             </script>
+            <!-- KB Search Overlay -->
+            <div id="kb-overlay">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+                    <h2 style="margin:0;">📚 裝修法規百科</h2>
+                    <button onclick="toggleKBSearch()" style="background:none; border:none; font-size:24px; cursor:pointer; color:#94a3b8;">&times;</button>
+                </div>
+                <div class="kb-search-box">
+                    <input type="text" id="kb-input" class="kb-input" placeholder="輸入關鍵字 (如：防火、施工)..." onkeyup="if(event.key==='Enter') doKBSearch()">
+                    <button class="btn ok" onclick="doKBSearch()" style="flex:none; width:80px; padding:10px;">搜尋</button>
+                </div>
+                <div id="kb-results">
+                    <div style="text-align:center; padding:40px; color:#94a3b8;">
+                        <div style="font-size:40px; margin-bottom:10px;">📚</div>
+                        請輸入關鍵字開始查詢
+                    </div>
+                </div>
+            </div>
         </body>
         </html>`;
     }

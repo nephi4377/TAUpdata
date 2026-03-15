@@ -105,4 +105,12 @@
 4.  **連線測試**: 使用 `test_dependencies.js` 確保補丁環境下的 `require` 鏈路絕對暢通。
 
 ---
+## 🛠️ 9. 部署故障排除：手動部署 SOP
+當 `upload.bat` 因為中文字路徑編碼出錯時，請依照下列步驟手動發布：
+
+1.  **備份**：`mkdir BAK\Tienxin_v{VER}_{DATE} ; robocopy client\src BAK\v{VER}\client\src /E`
+2.  **提交**：`git add . ; git commit -m "chore: release v{VER}"`
+3.  **推播與標籤**：`git push origin main ; git tag v{VER} ; git push origin v{VER}`
+
+---
 *此指南由 AI 助理小添彙補，旨在輔助設計總監進行高品質交付。*
