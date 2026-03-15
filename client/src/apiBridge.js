@@ -406,7 +406,29 @@ class ApiBridge {
         }
     }
 
-    // [v1.5] 獲取並解析 iCloud 行事曆事件
+    // [v26.03.15.2] 儲存 iCloud 網址並啟動同步
+    async saveIcloudUrl(url) {
+        if (!url) return { success: false, message: '網址不能為空' };
+        
+        console.log(`[ApiBridge] 正在儲存 iCloud 網址: ${url.substring(0, 30)}...`);
+        
+        // 1. 儲存至本地 Config
+        this.config.setIcloudCalendarUrl(url);
+
+        // 2. 同步至 Firebase (雲端分散式同步)
+        if (this.services && this.services.firebaseService) {
+            await this.services.firebaseService.uploadIcloudUrl(url);
+        }
+
+        // 3. 立即觸發一次行程抓取與 UI 廣播
+        if (this.services && this.services.reminderService) {
+            await this.syncAllIcloudReminders(this.services.reminderService);
+        }
+
+        return { success: true, message: 'iCloud 網址已更新並啟動同步' };
+    }
+
+    // [v1.5] 獲獲並解析 iCloud 行事曆事件
     async fetchIcloudEvents(url, todayStr) {
         if (!url) return [];
         // [v1.13.0] URL 自動校準：webcal:// 會導致部分環境 axios 報錯，強制轉為 https://
