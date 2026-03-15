@@ -962,15 +962,15 @@ class MonitorService {
         let syncText = 'iCloud 未連線';
 
         if (isIcloudOnline) {
-            syncStatus = `<span class="status-dot online" style="cursor:pointer; z-index:99; position:relative;" onclick="doIcloudSetup()"></span>`;
-            syncText = `<span style="cursor:pointer; position:relative; z-index:99;" onclick="doIcloudSetup()">iCloud 已連線</span>`;
+            syncStatus = `<span class="status-dot online"></span>`;
+            syncText = `<span>iCloud 已連線</span>`;
         } else if (hasIcloudUrl) {
-            syncStatus = `<span class="status-dot offline" style="cursor:pointer; z-index:99; position:relative;" onclick="doIcloudSetup()"></span>`;
-            syncText = `<span style="cursor:pointer; position:relative; z-index:99;" onclick="doIcloudSetup()">iCloud 已設定</span>`;
+            syncStatus = `<span class="status-dot offline"></span>`;
+            syncText = `<span>iCloud 同步中...</span>`;
         } else {
-            // [v26.03.15.9] 最終修復：標籤點擊後直接執行 doIcloudSetup 一鍵綁定
-            syncStatus = `<span class="status-dot offline" style="background:#e74c3c; box-shadow:0 0 10px rgba(231,76,60,0.5); animation: pulse 2s infinite; cursor:pointer; z-index:99; position:relative;" onclick="doIcloudSetup()"></span>`;
-            syncText = `<span style="color:#e74c3c; font-weight:800; cursor:pointer; position:relative; z-index:99;" onclick="doIcloudSetup()">❌ iCloud 網址未設定</span>`;
+            // [v26.03.16.0] 自動化方案：不再需要點擊，系統自動套用 SPEC 預設網址
+            syncStatus = `<span class="status-dot offline" style="background:#e74c3c; box-shadow:0 0 10px rgba(231,76,60,0.5); animation: pulse 2s infinite;"></span>`;
+            syncText = `<span style="color:#e74c3c; font-weight:800;">iCloud 初始化中</span>`;
         }
 
         return `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>
@@ -1276,14 +1276,7 @@ class MonitorService {
                                 s = '<span class="status-dot offline" style="background:#e74c3c;"></span>';
                                 t = '<span style="color:#e74c3c; font-weight:800;">❌ iCloud 網址未設定</span>';
                             }
-                            // [v2.5.1.0] 強化 UX：讓狀態標籤可點擊，跳轉設定中心分頁
-                            icStat.style.cursor = 'pointer';
-                            icStat.title = '點擊設定 iCloud 網址';
-                            icStat.style.position = 'relative';
-                            icStat.style.zIndex = '10';
-                            icStat.onclick = () => {
-                                doIcloudSetup();
-                            };
+                            // [v26.03.16.0] 回歸顯示：不再需要點擊，僅顯示狀態
                             icStat.innerHTML = s + ' ' + t;
                         }
 
