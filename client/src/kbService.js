@@ -7,6 +7,7 @@ const { app } = require('electron');
  * 檔案名稱: kbService.js
  * 功能: 裝修法規百科服務 - 雲端化版本 (Google Sheets 整合)
  * [v26.03.15] 實作 Google Sheets 雲端拉取與本地快照邏輯
+ * [v26.03.15.1] 修復搜尋報錯問題，優化模組載入
  * =============================================================================
  */
 class KnowledgeBaseService {
@@ -15,6 +16,13 @@ class KnowledgeBaseService {
         this.snapshotPath = path.join(this.kbDir, 'kb_snapshot.json');
         this.articles = [];
         this.sheetUrl = 'https://docs.google.com/spreadsheets/d/1JCkkoW2F0mmZjADeYe1f1jISzWL9vrArCKZB9bn-yOQ/export?format=csv&gid=1333523823';
+        
+        // [v26.03.15.1] 提早載入 axios 避免在異步調用中發生路徑問題
+        try {
+            this.axios = require('axios');
+        } catch (e) {
+            console.error('[KB] Axios 載入失敗:', e.message);
+        }
     }
 
     /**
@@ -23,15 +31,18 @@ class KnowledgeBaseService {
     async loadKnowledgeBase() {
         try {
             console.log('[KB] 正在嘗試從雲端 (Google Sheets) 拉取最新數據...');
-            // 使用 axios 獲取 CSV 數據 (假設 apiBridge 已載入 axios)
-            const axios = require('axios');
-            const response = await axios.get(this.sheetUrl, { timeout: 10000 });
+            if (!this.axios) this.axios = require('axios');
+            
+            const response = await this.axios.get(this.sheetUrl, { timeout: 10000 });
             
             if (response.data) {
-                this.articles = this._parseCSV(response.data);
-                this._saveSnapshot();
-                console.log(`[KB] 雲端同步成功，共載入 ${this.articles.length} 條 Approved 條目。`);
-                return;
+                const newData = this._parseCSV(response.data);
+                if (newData && newData.length > 0) {
+                    this.articles = newData;
+                    this._saveSnapshot();
+                    console.log(`[KB] 雲端同步成功，共載入 ${this.articles.length} 條 Approved 條目。`);
+                    return;
+                }
             }
         } catch (error) {
             console.warn('[KB] 雲端拉取失敗，切換至本地快照模式:', error.message);
