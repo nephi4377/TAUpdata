@@ -961,16 +961,14 @@ class MonitorService {
         let syncStatus = '<span class="status-dot offline"></span>';
         let syncText = 'iCloud 未連線';
 
+        // [v26.03.16.2] 全自動化優化：不再讀取 hasIcloudUrl 標記，因為網址已在 Config 中強制預設
         if (isIcloudOnline) {
             syncStatus = `<span class="status-dot online"></span>`;
             syncText = `<span>iCloud 已連線</span>`;
-        } else if (hasIcloudUrl) {
-            syncStatus = `<span class="status-dot offline"></span>`;
-            syncText = `<span>iCloud 同步中...</span>`;
         } else {
-            // [v26.03.16.0] 自動化方案：不再需要點擊，系統自動套用 SPEC 預設網址
-            syncStatus = `<span class="status-dot offline" style="background:#e74c3c; box-shadow:0 0 10px rgba(231,76,60,0.5); animation: pulse 2s infinite;"></span>`;
-            syncText = `<span style="color:#e74c3c; font-weight:800;">iCloud 初始化中</span>`;
+            // 只要不是 Online，一律顯示初始化/同步中，因為網址是內建的
+            syncStatus = `<span class="status-dot offline" style="animation: pulse 2s infinite;"></span>`;
+            syncText = `<span>iCloud 同步中...</span>`;
         }
 
         return `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>
@@ -1373,6 +1371,11 @@ class MonitorService {
                     } catch (ex) {
                         logDebug('updateUI 崩潰: ' + ex.message);
                     }
+                }
+
+                // [v26.03.16.2] 定義一個空函式以防舊版殘留標籤嘗試點擊導致報錯
+                function doIcloudSetup() { 
+                    logDebug('iCloud 已全自動化，無需手動操作。'); 
                 }
 
                 async function doCheckin(e) {
