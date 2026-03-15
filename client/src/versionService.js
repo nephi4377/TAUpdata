@@ -6,8 +6,18 @@ const log = require('electron-log');
 // [v1.18.21] 去依賴化對抗性修復：殼層 (Shell) 嚴禁依賴第三方 fs-extra，確保啟動絕對穩定。
 const fsp = fs.promises;
 
-// [v2.3.4] 版本中心化：從 package.json 獲取基礎版本，避免多處填寫
-const BASE_VERSION = require('../../package.json').version || '2.3.8.0'; // 2.3.8.0 為編碼基底兜底
+// [v2.6.318] 版本單一來源化修復：使用絕對路徑動態讀取 package.json，確保 ASAR 環境穩定且不硬編碼
+let BASE_VERSION = '2.6.318'; 
+try {
+    const appRoot = app ? app.getAppPath() : path.join(__dirname, '..', '..');
+    const pkgPath = path.join(appRoot, 'package.json');
+    if (fs.existsSync(pkgPath)) {
+        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+        if (pkg && pkg.version) BASE_VERSION = pkg.version;
+    }
+} catch (e) {
+    log.error('[VersionService] 讀取 package.json 失敗:', e.message);
+}
 
 class VersionManager {
     constructor() {
