@@ -246,17 +246,28 @@ class FirebaseService {
 
     /**
      * [v26.03.15] 處理 iCloud 網址雲端同步
+     * [v26.03.15.2] 修復「空值覆蓋」問題：若雲端回傳為空，而本地已有設定，則禁止覆蓋。
      */
     _handleIcloudSync(data) {
         if (!data || !data.url) return;
+        
+        const url = data.url.trim();
+        if (!url || !url.startsWith('http')) {
+            console.warn('[Firebase] 雲端 iCloud 網址格式異常或為空，略過同步。');
+            return;
+        }
+
         const currentUrl = this.config.getIcloudCalendarUrl();
-        if (data.url !== currentUrl) {
-            console.log(`[Firebase] 🔗 偵測到雲端 iCloud 網址變更，正在同步...`);
-            this.config.setIcloudCalendarUrl(data.url);
+        if (url !== currentUrl) {
+            console.log(`[Firebase] 🔗 偵測到有效雲端網址變更，正在同步本地設定...`);
+            this.config.setIcloudCalendarUrl(url);
             
-            // 立即觸發一次同步
-            if (this.reminderService && this.reminderService.apiBridge) {
-                this.reminderService.apiBridge.syncAllIcloudReminders(this.reminderService);
+            // 立即觸發一次同步 (使用靜態引用而非 apiBridge)
+            if (this.reminderService) {
+                console.log('[Firebase] 正在重新啟動 iCloud 提醒事項抓取任務...');
+                this.reminderService.fetchIcloudReminders(url).catch(e => {
+                    console.error('[Firebase] 重新抓取失敗:', e.message);
+                });
             }
         }
     }
