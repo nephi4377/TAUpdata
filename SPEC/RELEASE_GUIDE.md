@@ -21,7 +21,8 @@
 ## 📋 2. 版本三位一體原則 (The Trinity Protocol)
 為了確保自動更新、GitHub Actions 介面與版控不衝突，以下三項必須 ** 100% 數值一致**：
 1.  **Git Tag**: 必須以 `v` 開頭 (例如 `v2.0.9`)。
-2.  **package.json**: `version` 欄位必須與 Tag 數值相同。
+2.  **package.json**: `version` 欄位必須與 Tag 數值相同。必須符合 **Semver (X.Y.Z)** 格式（如 `2.6.316`）。
+    - **禁止**：日期格式 `26.03.15` (會導致 Electron 打包與啟動報錯)、前導零 `1.02.3`。
 3.  **Git Commit Message**: 提交說明必須包含版本號 (例如 `chore: release v2.0.9`)。
 
 > [!IMPORTANT]
