@@ -289,12 +289,14 @@ class ReminderService {
             const todayStr = this._formatDate(now);
             const currentTimeMin = now.getHours() * 60 + now.getMinutes();
 
-            // 凌晨 00:00 重置今日重複任務 (每天只重置一次)
-            if (now.getHours() === 0 && now.getMinutes() === 0) {
+            // [v1.18.6] 調整重置邏輯：改由凌晨 07:00 執行重置 (配合工作作息)
+            const resetHour = 7;
+            if (now.getHours() === resetHour && now.getMinutes() === 0) {
                 if (!this._lastResetDate || this._lastResetDate !== todayStr) {
-                    console.log('[Reminder] 凌晨重置重複任務狀態');
+                    console.log(`[Reminder] 上午 ${resetHour}:00 重置今日重複任務狀態`);
                     this.monitorService.storageService.resetRepeatingTasks(todayStr);
                     this._lastResetDate = todayStr;
+                    this.checkDailyReset(); // 同步處裡今天狀態重置
                 }
             }
 
@@ -536,10 +538,10 @@ class ReminderService {
         const reminderId = reminder.id;
         const currentStatus = this.todayStatus[reminderId] || { status: 'pending' };
 
-        // 如果已完成，不再提醒
-        if (currentStatus.status === 'completed') {
-            console.log(`[Reminder] ${reminderId} 已完成，跳過`);
-            return;
+        // [v1.18.6 Fix] 強化去重：檢查該提醒 ID 是否已在今日執行過彈窗
+        if (currentStatus.isFired && !reminder.isIcloud) {
+             console.log(`[Reminder] ${reminderId} 此對象今日已噴過氣泡，跳過`);
+             return;
         }
 
         // [v26.03.04 Fix] 強化打卡判定：只要有打卡時間（即使 backend 旗標未同步），亦自動完成任務
@@ -553,13 +555,21 @@ class ReminderService {
                     ...currentStatus,
                     status: 'completed',
                     completedAt: new Date().toISOString(),
-                    autoCompleted: true
+                    autoCompleted: true,
+                    isFired: true
                 };
                 this._saveTodayStatus();
                 this._notifyStatusUpdated(reminderId);
                 return;
             }
         }
+
+        // 標記為已彈出並持久化
+        this.todayStatus[reminderId] = {
+            ...currentStatus,
+            isFired: true
+        };
+        this._saveTodayStatus();
 
         // [v1.18.0] 改為排隊模式，避免一次噴出多個氣泡
         this.reminderQueue.push(reminder);
@@ -1046,26 +1056,50 @@ class ReminderService {
     }
 
     /**
-     * [v26.03.04] 每日數據清洗門戶：確保跨天時自動重置狀態
+     * [v26.03.16] 智慧重置方針：恢復 00:00 物理重置感，但 07:00 才清算舊訊息狀態。
      */
     checkDailyReset() {
         const now = new Date();
         const todayStr = this._formatDate(now);
+        const currentHour = now.getHours();
 
+        // 1. 物理重置檢查 (對應 00:00)
         if (!this.lastCheckDate) {
             this.lastCheckDate = todayStr;
             return;
         }
 
-        if (this.lastCheckDate !== todayStr) {
-            console.log(`[Reminder] 📅 偵測到跨日 (${this.lastCheckDate} -> ${todayStr})，自動清空過期狀態...`);
+        // 2. 智慧清算邏輯
+        // 我們定義「作息日」重置標記：若未滿 07:00，邏輯上仍屬於「前一個處理週期」
+        let cycleTag = todayStr;
+        if (currentHour < 7) {
+            const yesterday = new Date(now);
+            yesterday.setDate(yesterday.getDate() - 1);
+            cycleTag = this._formatDate(yesterday);
+        }
+
+        if (!this._lastCycleTag) {
+            this._lastCycleTag = cycleTag;
+            return;
+        }
+
+        // 當「週期標記」變更時 (代表真正跨越了 07:00 AM)
+        if (this._lastCycleTag !== cycleTag) {
+            console.log(`[Reminder] ☕ 上午 07:00 清算時刻已達 (${this._lastCycleTag} -> ${cycleTag})，重置訊息狀態...`);
             this.todayStatus = {};
             this.reminders = this.reminders.filter(r => !r.isIcloud && !r.isTomorrowPreview);
             this.config.set('reminderDailyState', null);
-            this.lastCheckDate = todayStr;
-
+            this._lastCycleTag = cycleTag;
+            
             // 通知 UI 刷新
             this._notifyStatusUpdated('day_reset');
+        }
+
+        // 3. 更新物理日期標記 (僅用於內部追蹤)
+        if (this.lastCheckDate !== todayStr) {
+            console.log(`[Reminder] 🌙 跨越子夜 00:00 (${this.lastCheckDate} -> ${todayStr})，更新物理日期感。`);
+            this.lastCheckDate = todayStr;
+            // 物理日期切換時，我們可以選擇性刷新某些不需鎖定的排程
         }
     }
 
@@ -1171,13 +1205,26 @@ class ReminderService {
                         // 未來的行程：排程提醒
                         console.log(`[Reminder] 預掛雲端行程: ${ev.summary} 將於 ${ev.startTime} 提醒`);
                         const timer = setTimeout(() => {
-                            this.fireReminder(icloudReminder, todayStr);
+                            // [v1.18.5 Fix] 執行前最後檢查，防止同步時重複觸發
+                            if (this.todayStatus[icloudReminder.id]?.status !== 'completed' && !this.todayStatus[icloudReminder.id]?.isFired) {
+                                this.fireReminder(icloudReminder, todayStr);
+                                if (this.todayStatus[icloudReminder.id]) this.todayStatus[icloudReminder.id].isFired = true;
+                            }
                         }, diffMin * 60 * 1000);
                         this.timers.push(timer);
                     } else if (diffMin > -120) {
                         // 過去 2 小時內的行程：補彈提醒 (避免過期太久干擾)
-                        console.log(`[Reminder] 補發近期雲端行程: ${ev.summary} (${ev.startTime})`);
-                        this.fireReminder(icloudReminder, todayStr);
+                        // [v1.18.5 Fix] 增加 isFired 判定，避免每 30 分鐘同步時重複補彈
+                        if (!this.todayStatus[icloudReminder.id]?.isFired) {
+                            console.log(`[Reminder] 補發近期雲端行程: ${ev.summary} (${ev.startTime})`);
+                            this.fireReminder(icloudReminder, todayStr);
+                            if (this.todayStatus[icloudReminder.id]) {
+                                this.todayStatus[icloudReminder.id].isFired = true;
+                                this._saveTodayStatus(); // 立即持久化，防止重啟後再次補彈
+                            }
+                        } else {
+                            console.log(`[Reminder] 近期行程已彈出過，跳過補發: ${ev.summary}`);
+                        }
                     } else {
                         // 更早的行程：僅列入清單，不主動彈窗
                         console.log(`[Reminder] 登錄今日已過行程: ${ev.summary} (${ev.startTime})`);
@@ -1445,11 +1492,8 @@ class ReminderService {
             isExternal: true
         };
 
-        // [v1.18.2] 隊列排重：避免內容完全相同的訊息重複進隊列
-        const isDuplicate = this.reminderQueue.some(r => r.id === targetId && r.message === finalMessage);
-        if (!isDuplicate) {
-            this.fireReminder(reminderObj, todayStr);
-        }
+        // [v1.18.6] 強化去重：改由 fireReminder 內部判定 isFired
+        this.fireReminder(reminderObj, todayStr);
 
         // 5. 通知所有視窗刷新數據
         this._notifyStatusUpdated(targetId);

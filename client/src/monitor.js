@@ -143,13 +143,14 @@ class MonitorService {
         console.log(`[Monitor] 休閒警示閾值: ${this.leisureAlertThreshold / 60} 分鐘`);
         console.log(`[Monitor] 工作警示: 1h/2h/3h/4h/4.5h 階段提醒`);
 
-        // 立即執行一次取樣
-        await this.sample();
+        // [v26.03.16 FIX] 啟動核心取樣定時器，確保自動監控引擎運轉
+        if (this.sampleTimer) clearInterval(this.sampleTimer);
+        this.sampleTimer = setInterval(() => {
+            this.sample();
+        }, this.sampleInterval);
 
-        // [v1.6] 重啟後恢復今日累計數據
+        // [v26.03.16 FIX] 恢復數據與心跳啟動
         await this._restoreTodayStats();
-
-        // [v26.03.04] 啟動 Firebase 直連心跳 (5分鐘一次)
         this.startHeartbeat();
 
         console.log('[Monitor] 監測服務啟動中...');
@@ -263,15 +264,14 @@ class MonitorService {
                 // 真正的時間差 (秒)
                 durationSeconds = Math.round((nowTs - this.lastSampleTime.getTime()) / 1000);
 
-                // [v1.18.4] 專家級防禦：若時間差過大 (> 60s)，可能剛從休眠喚醒
-                // 為了數據準確性，強制校準為 15s 取樣基準，防止數據灌水 (Spike Protection)
+                // [v26.03.16.11] 專家級防禦：若時間差過大 (> 60s)，自動校準為 15s (Spike Protection)
                 if (durationSeconds > 60) {
                     console.log(`[Monitor] 偵測到時間突波 (${durationSeconds}s)，自動校準為 15s`);
                     durationSeconds = 15;
                 }
             }
 
-            // 檢查午休時間
+            // [v26.03.16.12] 檢查午休時間 (完全隔離模式 - 符合 SPEC)
             if (this.isLunchBreak()) {
                 await this.storageService.recordActivity({
                     timestamp: now,
@@ -285,25 +285,23 @@ class MonitorService {
                 this.lastWindowTitle = '';
                 this.lastCategory = 'lunch_break';
                 this.lastSubCategory = null;
+                this.lastSampleTime = now; // 必須更新最後取樣時間
                 this.sampleCount++;
 
-                // 午休時重設所有追蹤
+                // 午休時重設所有追蹤，保持靜默
                 this.resetLeisureTracking();
                 this.resetWorkTracking();
                 return;
             }
 
-            // 先取得前景視窗
+            // 獲取前景視窗
             const result = await activeWin.default();
-
-            if (!result) {
-                return;
-            }
+            if (!result) return;
 
             const appName = result.owner?.name || 'Unknown';
             const windowTitle = result.title || '';
 
-            // 先做分類
+            // 智慧分類偵測
             const classification = this.classifierService.classifyDetailed(appName, windowTitle);
             const category = classification.category;
             const subCategory = classification.subCategory;
@@ -311,7 +309,7 @@ class MonitorService {
             // 根據分類決定閒置閾值
             const idleThreshold = (category === 'leisure')
                 ? this.idleThresholdLeisure  // 休閒類：10 分鐘
-                : this.idleThresholdOther;   // 其他類：2 分鐘
+                : this.idleThresholdOther;   // 其他類：5 分鐘 (根據 constructor 預設)
 
             // 取得閒置時間
             const idleTime = this.getIdleTime();
@@ -331,6 +329,7 @@ class MonitorService {
                 this.lastWindowTitle = `閒置 ${Math.floor(idleTime / 60)} 分鐘`;
                 this.lastCategory = 'idle';
                 this.lastSubCategory = null;
+                this.lastSampleTime = now;
                 this.sampleCount++;
 
                 // 閒置時重設所有追蹤
@@ -365,7 +364,7 @@ class MonitorService {
                 this.nonLeisureSeconds = 0;
                 this.checkLeisureAlert(appName, windowTitle, durationSeconds);
             } else {
-                // 工作或其他：需要連續 30 秒以上才重置休閒計時
+                // 工作或其他：需要連續 60 秒以上才重置休閒計時 (leisureResetThreshold)
                 this.nonLeisureSeconds += durationSeconds;
 
                 if (this.nonLeisureSeconds >= this.leisureResetThreshold) {
@@ -1371,11 +1370,6 @@ class MonitorService {
                     } catch (ex) {
                         logDebug('updateUI 崩潰: ' + ex.message);
                     }
-                }
-
-                // [v26.03.16.2] 定義一個空函式以防舊版殘留標籤嘗試點擊導致報錯
-                function doIcloudSetup() { 
-                    logDebug('iCloud 已全自動化，無需手動操作。'); 
                 }
 
                 async function doCheckin(e) {

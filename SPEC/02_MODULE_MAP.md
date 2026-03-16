@@ -16,14 +16,39 @@
 - **同步**：發送 POST 後 **延遲 2.5 秒** 才執行 `refreshWorkInfo`，防止 Google Sheets 寫入延遲。
 - **防禦**：若本地已有打卡紀錄，雲端回傳空值時 **不允許覆寫**。
 
-### 2. 訊息路由 (三階反查機制)
-- **L1 (專案)**：比對 `顧客列表` UID -> 獲取專案號 (如 #730) -> 轉發至該案負責人。
-- **L2 (在線)**：查無專案時，執行「在線隨機分配」(權限 >= 2、10min 內有心跳、排除主管)。
-- **L3 (保底)**：若無人在線，強制路由至 **Admin**。
-- **過濾機制 (Filter) @STABLE**：訊息處理前，先經由 `isEmployee(name, uid)` 交叉比對。優先使用 **UID** 識別，保底 **姓名** 比對。若為內部員工則靜默捨棄，不觸發提醒。
-- **去重機制 (Deduplication) @STABLE**：實作「持久化 ID 濾網」與「內容指紋比對」。
-    1. **跨重啟記憶**：處理過的訊息 ID 會持久化記錄於本地，防止重啟後再次觸發 Firebase 舊訊息。
-    2. **內容防護**：2秒內若收到同一來源且內容完全相同的訊息（Webhook 重試所致），將自動過濾為僅存一筆。
+### 2. 訊息路由 (三階反查分配機制 - Backend 驅動)
+- **核心架構**: 由 **GAS (Google Apps Script)** 決定路由，Firebase 作為傳遞介面（Postbox），Client 端僅負責監聽。
+
+```mermaid
+graph TD
+    A[收到顧客 LINE 訊息/系統通知] --> B{L1: 顧客是否有綁定專案?}
+    B -- 是 --> C[獲取專案負責人 UID]
+    B -- 否 --> D{L2: 在線人員隨機分配}
+    
+    D --> D1["篩選條件: 權限>=2 + 10min內有心跳"]
+    D1 --> D2{是否有符合條件人員?}
+    
+    D2 -- 是 --> E[隨機抽樣在線人員 UID]
+    D2 -- 否 --> F[L3: 保底方案 Admin UID]
+    
+    C --> G["寫入 Firebase 路徑: /notifications/UID"]
+    E --> G
+    F --> G
+    
+    G --> H["對應 Client 端 .on('child_added') 觸發"]
+    H --> I[Client 端去重與彈窗處理]
+```
+
+- **分配規則 (GAS 邏輯)**:
+    - **L1 (專案綁定)**：比對 `顧客列表` UID -> 獲取對應專案號 (如 #730) -> 寫入該專案**負責人**的 Firebase 路徑 (`/notifications/{EmployeeUID}`)。
+    - **L2 (在線自動分配)**：若顧客無綁定專案，執行「在線人員分配」。
+        - **篩選條件**: 權限 >= 2、10min 內有心跳 (`userStatus` 活躍)、排除主管。
+        - **權重分配**: 隨機抽樣在線人員，寫入其專案路徑。
+    - **L3 (保底策略)**：若無任何在線人員，強制寫入至 **Admin** 的 Firebase 路徑。
+- **過濾與防禦 (Filter/Deduplication) @STABLE**：
+    - **內部過濾**: 動作前先經由 `isEmployee` 比對員工 UID，員工間訊息靜默捨棄，不觸發提醒。
+    - **Client 去重**: 實作「持久化 ID 濾網」，防止 Firebase Webhook 重試所致之重複提醒。
+    - **[NEW] 物理路徑鎖定**: 每個 Client 啟動時僅掛載屬於自己 UID 的 Firebase 直連路徑，確保物理上的隱私隔離。
 
 ### 3. 統計時間更新功能：標準動作法則 (SOP)
 這是一個**封閉且循環**的完整動作，定義為以下五個階段：
@@ -58,6 +83,26 @@
 
 ## 📁 檔案職責與 API
 - **apiBridge.js**：全系統 **唯一通訊出口**。負責 GAS (/api/report)、iCloud (ICS 每 30min)、Firebase RTDB。
+- **reminderService.js**：全系統 **提醒管家 (Reminder Core)**。負責統籌所有來源（iCloud, Firebase, 本地排程）的氣泡彈出、排隊顯示與跨日狀態清算。
+    - **智慧雙軌重置機制 (Smart Reset Algorithm - v1.18.7)**:
+        - **設計背景**: 解決凌晨時段（00:00-07:00）處理任務後，因日期物理切換導致記錄被抹除的痛點。
+        - **物理重置點 (00:00)**: 
+            - 系統更新 `lastCheckDate`。
+            - 重置所有單日「固定定時任務」（如打卡提醒）。
+        - **邏輯重置點 (07:00)**: 
+            - 引入 `_lastCycleTag` (作息週期標記)。
+            - 若 `currentTime < 07:00`，`cycleTag` 繼承昨日 ID。
+            - 真正執行 `day_reset` (清空 `todayStatus`) 的條件為 `_lastCycleTag !== cycleTag`。
+        - **狀態鎖定規則**: 凌晨 00:00 ~ 07:00 期間變更的狀態（如點擊完成、稍後、系統已噴氣泡標記）會被物理持久化並在跨越 00:00 時**強制保留**，直到 07:00 方可清算。
+    - **氣泡去重指紋機制 (Fired-once Fingerprint Logic)**:
+        - **目的**: 徹底杜絕 iCloud 週期性同步（30min）或 Firebase Webhook 重試導致的重複干擾。
+        - **指紋構成**: `ReminderID` + `TodayDateTag`。
+        - **判定流**: `fireReminder(item)` -> 檢查 `todayStatus[ID].isFired`。
+            - 若 `isFired === true` 且 `status !== 'completed'`: 視為同步干擾，靜默攔截。
+            - 若 `isFired === undefined`: 執行彈窗 -> 立即設置 `isFired = true` -> 執行 `_saveTodayStatus()` (持久化防禦)。
+        - **物理保護**: 為防止 Electron 視窗渲染延遲導致的併發觸發，指紋標記必須在進入 `reminderQueue` **之前**完成寫入。
+    - **佇列管理 (Queueing)**:
+        - 採用 400ms 緩衝間隔，確保當多筆（如 iCloud 補發 3 筆行程）同時到達時，氣泡能平滑依序彈出。
 - **monitor.js**：前景監測與看板核心服務。
     - **【大綱 - 小添小秘書】**：這模組是助理的「眼睛與心情」，每 15 秒掃描一次你在用什麼軟體，自動判別你是「專注戰鬥」還是「充電休息」。它也是你與「小添」互動的主要窗口，負責顯示可愛的對話、幫你打卡、並整理你的 iCloud 待辦清單。它很貼心，如果你專注太久（如 4.5 小時）會出來趕你去休息，如果你點擊任務，它會立刻透過「樂觀更新」幫你勾選，不必等網路轉圈圈。
     - **【技術深度細節 - 用於功能審計】**：
@@ -68,23 +113,30 @@
         2. **閒置偵測系統 (`getIdleTime`)**：
             - **動態閾值**：休閒類軟體 10min 判定閒置；工作/其他類軟體 5min 判定閒置。
             - **時光回溯**：判定閒置後，今日累計秒數會自動扣除該段閒置時間，確保生產力百分比真實。
-        3. **MDQ (Mascot Dialogue Queue) 隊列系統**：
-            - **訊息管理**：採用隊列存儲訊息對象 `{text, priority}`。
-            - **優先級機制**：Priority 1-2 為高等級（如打卡成功），會觸發 **10秒 鎖定**，鎖定期間新訊息需排隊；Priority 3-4 為一般訊息（如閒置提醒）。
-            - **渲染器**：每 1s 輪詢隊列。
-        4. **看板 UI 與樂觀更新 (`generateStatsHtml`)**：
-            - **樂觀鎖**：`toggleTask` 點擊後，前端 HTML 立即變更（變更 icon 與文字），背景再異步發送 `reminderAPI`。
-            - **智能排序**：UI 渲染時自動執行 `(status==='pending' ? -1 : 1)` 排序，確保待辦永遠置頂。
-            - **數據防守**：統計數據牆設有 720 分鐘硬上限。
-        5. **自動警示系統**：
-            - **工作警示**：1h、2h、3h、4h、4.5h 梯度觸發。
-            - **休閒警示**：累計休閒達 5min（`leisureAlertThreshold`）觸發一次。
+- **monitor.js**：全系統 **環境數據採樣與警示大腦 (The Brain)**。負責背景監控、生產力計算與秘書對話調核。
+    - **更新頻率與心跳 (Intervals)**:
+        - **核心取樣 (Sampling)**：每 **15 秒** 取樣一次前景視窗。若偵測到 >60s 的時間跳變（如休眠喚醒），自動校準為 15s 以防數據灌水。
+        - **iCloud 同步**：啟動 5s 首刷，隨後每 **30 分鐘** 定時同步一次行事曆。
+        - **Firebase 心跳**：每 **5 分鐘** 向雲端回傳一次在線狀態與當前應用程式。
+    - **秘書報告系統 (Mascot Report / MDQ)**:
+        - **MDQ 隊列管理**: 
+            - 播報器每 **1 秒** 輪詢隊列是否有待播訊息。
+            - 具備優先級覆蓋：LINE 緊急訊息 (Priority 1) > 操作反饋 (Priority 2) > 閒聊 (Priority 3)。
+            - 重要訊息保留鎖 (Queue Lock)：顯示後 **10 秒** 內禁止被同優先級或低優先級訊息覆蓋。
+        - **自動閒聊 (Idle Chat)**：若連續 **15 分鐘** 無任何動態訊息，秘書將主動觸發閒聊。
+    - **統計中心數據刷新 (Stats Center)**:
+        - 視窗開啟時，每 **60 秒** 執行一次全量數據對齊 (`refreshStats`)，包含生產力指數、打卡時間與工作累計。
+    - **警示系統**: 工作警示 (1h...4.5h 梯度)；休閒警示 (累計 5min 觸發，冷卻 5min)。
             - **自癒通知**：`showToast` 採用 `showInactive` (不搶奪控制權) 且具備 `activityCheckInterval`，偵測到使用者恢復活動即自動消失。
-        6. **雲端同步與心跳**：
-            - **iCloud**：啟動 5s 後首領同步，隨後每 30min 更新待辦。
-            - **Firebase 心跳**：每 3min 直接連線 RTDB 更新使用者在線狀態 (`updateHeartbeat`)。
 - **storage.js**：SQLite 事務處理，每小時自動備份。
-- **firebaseService.js**：即時訊息監聽。下載訊息後立即執行 `remove()` 確保雲端 **零 Pending**。
+- **firebaseService.js**：全系統 **即時訊息與控制中心 (Realtime Msg Link)**。負責監聽雲端指令與推播訊息。
+    - **訊息生命週期與保護邏輯 (Msg Lifecycle)**:
+        - **監聽與抓取**: 持續掛載 `.on('child_added')` 監聽。一經下載立即執行 `remove()`，確保 Firebase RTDB 中 **零 Pending**，防止跨裝置重複領取。
+        - **時間緩衝 (Batching Buffer)**: 收到訊息後不立即彈出，而是進入 2 秒聚合緩衝，將「同一秒鐘內發送的多筆 Webhook 訊息」合併為一則提醒物件，減少使用者困擾。
+        - **本地 ID 去重 (Secondary Filter)**: 
+            - 為了防禦「Firebase 刪除延遲」導致的重複領取，系統維護一個 `processedMessages` (LRU Cache)。
+            - 每個訊息進入時，先進行 MD5 內容指紋比對與 ID 查表。若 ID 已存在，則靜默捨棄。
+    - **連動機制**: 合併後的訊息會被轉化為標籤為 `isExternal: true` 的提醒，送入 `reminderService.processQueue`。
 - **hotReloader.js**：開發模式下 (`!app.isPackaged`) 強制禁用補丁載入，確保 Dropbox 修改即時生效。
 
 ## 📊 重要資料結構
