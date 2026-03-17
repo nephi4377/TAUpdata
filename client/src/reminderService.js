@@ -24,6 +24,10 @@ class ReminderService {
         this.isShowingReminder = false;
         this.queueGapMs = 2000; // 氣泡間隔 2 秒
 
+        // [v2026.03.17 Fix] 核心去重：指紋緩存 (Fingerprint Cache)
+        // 紀錄最近 5 分鐘內彈出的 ID，防止併發或同步重複觸發
+        this.recentFiredCache = new Set(); 
+
         // 提醒規則定義
         this.reminders = [
             // ═══ 每日提醒 ═══
@@ -532,17 +536,26 @@ class ReminderService {
 
     // 觸發提醒
     fireReminder(reminder, todayStr) {
-        console.log(`[Reminder] 觸發提醒: ${reminder.icon} ${reminder.title}`);
-
         // [v1.17.3] 支援帶有 message 的外部提醒
         const reminderId = reminder.id;
-        const currentStatus = this.todayStatus[reminderId] || { status: 'pending' };
 
-        // [v1.18.6 Fix] 強化去重：檢查該提醒 ID 是否已在今日執行過彈窗
-        if (currentStatus.isFired && !reminder.isIcloud) {
-             console.log(`[Reminder] ${reminderId} 此對象今日已噴過氣泡，跳過`);
+        // [v2026.03.17 Fix] 早發性鎖定 (Early Locking)：進門第一件事先鎖死 ID
+        // 檢查 1: 今日持久化標記 | 檢查 2: 近期指紋緩存 (防止 ID 變動但內容重複)
+        const currentStatus = this.todayStatus[reminderId] || { status: 'pending' };
+        if (currentStatus.isFired || this.recentFiredCache.has(reminderId)) {
+             console.log(`[Reminder] ${reminderId} 已被鎖定(今日已噴或緩存中)，攔截重複噴發`);
              return;
         }
+
+        // 立即寫入鎖定標記，不等待後續邏輯
+        this.todayStatus[reminderId] = { ...currentStatus, isFired: true };
+        this.recentFiredCache.add(reminderId);
+        this._saveTodayStatus();
+
+        // 5 分鐘後自動解除緩存鎖定 (防抖週期)
+        setTimeout(() => this.recentFiredCache.delete(reminderId), 5 * 60 * 1000);
+
+        console.log(`[Reminder] 🚀 執行彈窗程序: ${reminder.icon} ${reminder.title}`);
 
         // [v26.03.04 Fix] 強化打卡判定：只要有打卡時間（即使 backend 旗標未同步），亦自動完成任務
         if (reminder.condition === 'not_checked_in') {
@@ -552,24 +565,16 @@ class ReminderService {
             if (isActuallyCheckedIn) {
                 console.log('[Reminder] 偵測到已有打卡記錄，自動標記提醒任務為 Done');
                 this.todayStatus[reminderId] = {
-                    ...currentStatus,
+                    ...this.todayStatus[reminderId],
                     status: 'completed',
                     completedAt: new Date().toISOString(),
-                    autoCompleted: true,
-                    isFired: true
+                    autoCompleted: true
                 };
                 this._saveTodayStatus();
                 this._notifyStatusUpdated(reminderId);
                 return;
             }
         }
-
-        // 標記為已彈出並持久化
-        this.todayStatus[reminderId] = {
-            ...currentStatus,
-            isFired: true
-        };
-        this._saveTodayStatus();
 
         // [v1.18.0] 改為排隊模式，避免一次噴出多個氣泡
         this.reminderQueue.push(reminder);

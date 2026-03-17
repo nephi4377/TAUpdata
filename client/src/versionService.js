@@ -308,13 +308,18 @@ class VersionManager {
         }
     }
 
+    /**
+     * 精準 Semver 比對 (X.Y.Z)
+     * @returns {number} 1: v1 > v2, -1: v1 < v2, 0: v1 == v2
+     */
     compareVersions(v1, v2) {
         if (!v1) return -1;
         if (!v2) return 1;
-        const cleanV1 = v1.toString().replace(/^v/i, '');
-        const cleanV2 = v2.toString().replace(/^v/i, '');
-        const parts1 = cleanV1.split('.').map(part => parseInt(part, 10) || 0);
-        const parts2 = cleanV2.split('.').map(part => parseInt(part, 10) || 0);
+        
+        const clean = (v) => v.toString().replace(/^v/i, '').split('-')[0]; // 移除 v 與預發布標記
+        const parts1 = clean(v1).split('.').map(part => parseInt(part, 10) || 0);
+        const parts2 = clean(v2).split('.').map(part => parseInt(part, 10) || 0);
+        
         const length = Math.max(parts1.length, parts2.length);
         for (let i = 0; i < length; i++) {
             const p1 = parts1[i] || 0;

@@ -47,8 +47,11 @@ class MonitorService {
         this.nonLeisureSeconds = 0;          // 追蹤連續非休閒秒數
 
         // 工作警示相關（友善提醒）
-        this.currentWorkSeconds = 0;
+        this.currentWorkSeconds = 0;    // 連續工作秒數 (警示用，隨時重置)
+        this.accumulatedWorkSeconds = 0; // 今日累計工作秒數 (看板用)
         this.currentOtherSeconds = 0;
+        this.accumulatedOtherSeconds = 0;
+        this.accumulatedLeisureSeconds = 0;
         this.workAlertLevels = [
             { minutes: 60, shown: false, icon: '☕', title: '喝杯水吧', message: '你已經專注工作 1 小時了！', detail: '記得喝口水、讓眼睛休息一下 😊' },
             { minutes: 120, shown: false, icon: '🚶', title: '起來走走', message: '哇！已經連續工作 2 小時了', detail: '起來伸展一下，活動筋骨吧！\n短暫休息能讓你更有效率 💪' },
@@ -176,17 +179,41 @@ class MonitorService {
             const stats = await this.storageService.getTodayTotalSeconds();
             const MAX_SECONDS = 43200; // 封閉上限 12h (對應 720 分鐘)
 
-            // [v26.03.04 Fix] 正確恢復各分類秒數（包含 Other，解決 0 分問題）
-            this.currentWorkSeconds = Math.min(stats.work || 0, MAX_SECONDS);
-            this.currentLeisureSeconds = Math.min(stats.leisure || 0, MAX_SECONDS);
-            this.currentOtherSeconds = Math.min(stats.other || 0, MAX_SECONDS);
+            // [v26.03.04 Fix] 正確恢復各分類累積秒數（用於看板顯示）
+            this.accumulatedWorkSeconds = Math.min(stats.work || 0, MAX_SECONDS);
+            this.accumulatedLeisureSeconds = Math.min(stats.leisure || 0, MAX_SECONDS);
+            this.accumulatedOtherSeconds = Math.min(stats.other || 0, MAX_SECONDS);
 
-            // 由於重啟，視為觸發過一次休閒冷卻，避免重啟後立刻彈窗 (除非再次超過閾值)
-            if (this.currentLeisureSeconds >= this.leisureAlertThreshold) {
+            // [2026-03-17 FIX] 警示計時隔離：啟動時連續計時強制歸零，防止誤報
+            this.currentWorkSeconds = 0;
+            this.currentLeisureSeconds = 0; // 這裡是連續休閒計時，也歸零
+
+            // [2026-03-17 專業對齊] 8:13 打卡補償：
+            // 若 Config 有打卡時間且今日資料庫尚無數據 (或數據過晚)，進行領先補償
+            const config = this.classifierService.configManager;
+            const workInfo = config.getTodayWorkInfo();
+            if (workInfo && workInfo.checkedIn && workInfo.checkinTime) {
+                const [h, m] = workInfo.checkinTime.split(':').map(Number);
+                const checkinDate = new Date();
+                checkinDate.setHours(h, m, 0, 0);
+                
+                const now = new Date();
+                if (now.getTime() > checkinDate.getTime()) {
+                    const diffMins = Math.floor((now.getTime() - checkinDate.getTime()) / (60000));
+                    // 僅在累積數據過小時校正，避免重複補償
+                    if (this.accumulatedWorkSeconds < diffMins * 60) {
+                        console.log(`[Monitor] 偵測到 8:13 打卡 (${workInfo.checkinTime})，主動執行啟動時長補償: ${diffMins} 分鐘`);
+                        this.accumulatedWorkSeconds = diffMins * 60;
+                    }
+                }
+            }
+
+            // 由於重啟，視為觸發過一次休閒冷卻
+            if (this.accumulatedLeisureSeconds >= this.leisureAlertThreshold) {
                 this.leisureAlertShown = true;
             }
 
-            console.log(`[Monitor] 數據恢復成功: 工作 ${Math.floor(this.currentWorkSeconds / 60)}分, 休閒 ${Math.floor(this.currentLeisureSeconds / 60)}分, 其他 ${Math.floor(this.currentOtherSeconds / 60)}分`);
+            console.log(`[Monitor] 數據恢復成功 (累積): 工作 ${Math.floor(this.accumulatedWorkSeconds / 60)}分, 休閒 ${Math.floor(this.accumulatedLeisureSeconds / 60)}分`);
         } catch (error) {
             console.error('[Monitor] 數據恢復失敗:', error.message);
         }
@@ -196,9 +223,9 @@ class MonitorService {
     async _syncDisplayStatsWithDB() {
         const stats = await this.storageService.getTodayTotalSeconds();
         // 內存累加為主，僅在明顯落後 DB 時對齊 (防禦性設計)
-        if (stats.work > this.currentWorkSeconds) this.currentWorkSeconds = stats.work;
-        if (stats.leisure > this.currentLeisureSeconds) this.currentLeisureSeconds = stats.leisure;
-        if (stats.other > (this.currentOtherSeconds || 0)) this.currentOtherSeconds = stats.other;
+        if (stats.work > this.accumulatedWorkSeconds) this.accumulatedWorkSeconds = stats.work;
+        if (stats.leisure > this.accumulatedLeisureSeconds) this.accumulatedLeisureSeconds = stats.leisure;
+        if (stats.other > (this.accumulatedOtherSeconds || 0)) this.accumulatedOtherSeconds = stats.other;
     }
 
     // 重設休閒追蹤 (僅重設警示狀態，不歸零今日總計)
@@ -207,8 +234,9 @@ class MonitorService {
         this.leisureAlertShown = false;
     }
 
-    // 重設工作追蹤 (僅重設警示狀態，不歸零今日總計)
+    // 重設工作追蹤 (根據 SOP：清零連續計時並重置警示標記)
     resetWorkTracking() {
+        this.currentWorkSeconds = 0;
         // 重設所有工作警示狀態
         this.workAlertLevels.forEach(level => level.shown = false);
     }
@@ -352,16 +380,23 @@ class MonitorService {
             // [v26.03.01] 正確累加內存統計 (精確權重反映)
             if (category === 'work') {
                 this.currentWorkSeconds += durationSeconds;
+                this.accumulatedWorkSeconds += durationSeconds;
             } else if (category === 'leisure') {
                 this.currentLeisureSeconds += durationSeconds;
+                this.accumulatedLeisureSeconds += durationSeconds;
             } else if (category === 'other') {
                 this.currentOtherSeconds = (this.currentOtherSeconds || 0) + durationSeconds;
+                this.accumulatedOtherSeconds = (this.accumulatedOtherSeconds || 0) + durationSeconds;
             }
 
             // 根據分類處理警示
             if (category === 'leisure') {
                 // 休閒：累計休閒時間，重設非休閒計時
                 this.nonLeisureSeconds = 0;
+                
+                // [v26.03.17 SOP] 進入休閒即重置工作連續計時
+                this.resetWorkTracking();
+                
                 this.checkLeisureAlert(appName, windowTitle, durationSeconds);
             } else {
                 // 工作或其他：需要連續 60 秒以上才重置休閒計時 (leisureResetThreshold)
@@ -387,8 +422,8 @@ class MonitorService {
 
             // 每 20 次取樣（約 5 分鐘）輸出一次日誌
             if (this.sampleCount % 20 === 0) {
-                const workMins = Math.floor(this.currentWorkSeconds / 60);
-                const leisureMins = Math.floor(this.currentLeisureSeconds / 60);
+                const workMins = Math.floor(this.accumulatedWorkSeconds / 60);
+                const leisureMins = Math.floor(this.accumulatedLeisureSeconds / 60);
                 console.log(`[Monitor] 已取樣 ${this.sampleCount} 次，目前: ${appName} [${classification.label}], 工作累計: ${workMins}分, 休閒累計: ${leisureMins}分`);
             }
         } catch (error) {
@@ -702,18 +737,35 @@ class MonitorService {
         }
 
         const todayStr = new Date().toISOString().split('T')[0];
+        const dbStats = await this.storageService.getTodayStats();
+        const totalSecs = await this.storageService.getTodayTotalSeconds();
+
+        // [v1.16.9] 數據牆封頂 (Data Wall)：強制截斷至 720 分鐘 (12h)
+        const limitWall = (m) => Math.min(Math.max(0, m || 0), 720);
+
+        // [v26.03.04 Fix] 內存優先數據合併：解決 DB 寫入延遲
+        // 使用新變數 accumulatedSeconds (用於看板)
+        const memWork = Math.round((this.accumulatedWorkSeconds || 0) / 60);
+        const memLeisure = Math.round((this.accumulatedLeisureSeconds || 0) / 60);
+        const memOther = Math.round((this.accumulatedOtherSeconds || 0) / 60);
+
+        const finalWork = limitWall(Math.max(dbStats.work, memWork));
+        const finalLeisure = limitWall(Math.max(dbStats.leisure, memLeisure));
+        const finalOther = limitWall(Math.max(dbStats.other, memOther));
+        const finalIdle = limitWall(Math.round((totalSecs.idle || 0) / 60));
+
         const gender = configManager.getMascotGender() || 'female';
         let currentSkin = configManager.getMascotSkin() || 'default';
         const lastChange = configManager.getLastSkinChangeDate();
 
-        // [v1.13.0] 每日一換邏輯：若日期不符，則重新抽籤並更新紀錄
+        // [v1.13.0] 每日一換邏輯
         if (lastChange !== todayStr) {
             console.log(`[Monitor] 偵測到新的一天 (${todayStr})，更換小秘書裝束...`);
             if (gender === 'female') {
                 const skins = ['default', 'blizzard', 'thunder', 'boulder', 'sacred', 'prism'];
                 currentSkin = skins[Math.floor(Math.random() * skins.length)];
             } else {
-                currentSkin = 'default'; // 男秘書目前僅有 default
+                currentSkin = 'default';
             }
             configManager.setMascotSkin(currentSkin);
             configManager.setLastSkinChangeDate(todayStr);
@@ -728,11 +780,9 @@ class MonitorService {
             new Promise(resolve => setTimeout(() => resolve(null), 3000))
         ]);
 
-        // [v1.17.1] 修復：data: URL 中無法載入 file:// 資源，改用 base64 data URI
         let mascotUrl = '';
         const localAssetPath = path.join(__dirname, '..', 'assets', fname);
-        const cachedPath = mascotPath;
-        const imgPath = (cachedPath && fs.existsSync(cachedPath)) ? cachedPath : (fs.existsSync(localAssetPath) ? localAssetPath : null);
+        const imgPath = (mascotPath && fs.existsSync(mascotPath)) ? mascotPath : (fs.existsSync(localAssetPath) ? localAssetPath : null);
         if (imgPath) {
             try {
                 const imgBuffer = fs.readFileSync(imgPath);
@@ -745,34 +795,24 @@ class MonitorService {
             mascotUrl = `https://raw.githubusercontent.com/nephi4377/TAUpdata/master/client/assets/${fname}`;
         }
 
-        // 獲取今日排行：修正參數為 1（代表取今天），原本誤傳 1000（天）導致查無資料
         const rawTopApps = await this.storageService.getRecentTopApps(1);
-        console.log(`[Monitor] 原始排行數據: ${JSON.stringify(rawTopApps)}`);
-
-        // 前端加總邏輯：合併相同應用的時數與分類
         const combinedApps = {};
         if (rawTopApps && rawTopApps.length > 0) {
             rawTopApps.forEach(a => {
                 const name = a.app_name || a.appName || '未知';
-
                 if (!combinedApps[name]) {
-                    combinedApps[name] = {
-                        dur: 0,
-                        category: a.category || 'other'
-                    };
+                    combinedApps[name] = { dur: 0, category: a.category || 'other' };
                 }
                 const dur = a.total_seconds || a.totalSeconds || a.duration_seconds || a.durationSeconds || 0;
                 combinedApps[name].dur += dur;
             });
         }
 
-        // [v26.03.02 Fix] 注入當前活躍的內存數據到排行榜
         if (this.lastAppName) {
             const name = this.lastAppName;
             if (!combinedApps[name]) {
                 combinedApps[name] = { dur: 0, category: this.lastCategory || 'other' };
             }
-            // 視為今日採樣的一部分
             combinedApps[name].dur += 15;
         }
 
@@ -784,21 +824,6 @@ class MonitorService {
             }))
             .sort((a, b) => b.duration_seconds - a.duration_seconds)
             .filter(a => a.duration_seconds > 0);
-
-        const dbStats = await this.storageService.getTodayStats();
-
-        // [v1.16.9] 數據牆封頂：所有分類與排行數值強制截斷至 720 分鐘 (對齊規約 05_IDEAS_AND_BRAINSTORM)
-        const limitWall = (m) => Math.min(Math.max(0, m || 0), 720);
-
-        // [v26.03.04 Fix] 使用內存累加值為主，DB 為輔：解決 DB 15 秒延遲寫入導致前端數據停滯
-        const memWork = Math.round((this.currentWorkSeconds || 0) / 60);
-        const memLeisure = Math.round((this.currentLeisureSeconds || 0) / 60);
-        const memOther = Math.round((this.currentOtherSeconds || 0) / 60);
-
-        const finalWork = limitWall(Math.max(dbStats.work, memWork));
-        const finalLeisure = limitWall(Math.max(dbStats.leisure, memLeisure));
-        const finalOther = limitWall(Math.max(dbStats.other, memOther));
-        const finalIdle = limitWall(dbStats.idle);
 
         // [v2.2.8.4] @STABLE 生產力指數公式：(工作 + 其他) / (工作 + 休閒 + 其他)
         const totalEffective = finalWork + finalOther;

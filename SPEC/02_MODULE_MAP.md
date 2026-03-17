@@ -127,6 +127,30 @@ graph TD
     - **統計中心數據刷新 (Stats Center)**:
         - 視窗開啟時，每 **60 秒** 執行一次全量數據對齊 (`refreshStats`)，包含生產力指數、打卡時間與工作累計。
     - **警示系統**: 工作警示 (1h...4.5h 梯度)；休閒警示 (累計 5min 觸發，冷卻 5min)。
+    
+#### 工作警示動作流程 (Work Alert SOP)
+工作警示旨在防止長時間連續工作導致的疲勞，其觸發核心是「連續專注時長」而非「當日累計總額」。
+
+```mermaid
+graph TD
+    A[Monitor 取樣事件] --> B{分類判定?}
+    B -- Category: Work --> C[累加 currentWorkSeconds]
+    B -- Category: Leisure --> D[觸發休閒警示並重置工作計時]
+    B -- Category: Idle/Lunch --> E[重置工作計時]
+    
+    C --> F{工作分鐘 >= 梯度門檻?}
+    F -- 是 --> G{該梯度 level.shown 為 false?}
+    G -- 是 --> H[彈出 Mascot 氣泡並設 shown=true]
+    F -- 否/G-否 --> I[繼續監測]
+    
+    D --> J[currentWorkSeconds = 0]
+    E --> J
+    J --> K[所有 workAlertLevels.shown = false]
+```
+
+- **重置觸發點**：一旦進入「休閒 (Leisure)」、「閒置 (Idle)」或「午休 (Lunch Break)」，系統會立即呼叫 `resetWorkTracking()`，將 `currentWorkSeconds` 清零並重置所有警示標記，確保下一次工作的提醒是從 0 開始計算。
+- **防止開機誤報**：數據恢復 (`_restoreTodayStats`) 雖會讀取當日累積總量以保持看板正確，但**不應**將該累積量直接作為警示基準。啟動時，警示計時應從 0 開始，或是僅在連續狀態延續時才累加。
+
             - **自癒通知**：`showToast` 採用 `showInactive` (不搶奪控制權) 且具備 `activityCheckInterval`，偵測到使用者恢復活動即自動消失。
 - **storage.js**：SQLite 事務處理，每小時自動備份。
 - **firebaseService.js**：全系統 **即時訊息與控制中心 (Realtime Msg Link)**。負責監聽雲端指令與推播訊息。

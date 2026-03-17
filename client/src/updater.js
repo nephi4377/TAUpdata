@@ -132,6 +132,11 @@ class PatchUpdater {
                 res.on('end', () => {
                     try {
                         const parsed = JSON.parse(data);
+                        // [v2026.03.17 Fix] 核心過濾：只接受正式發布且非草稿版本，防止 Pre-release 污染
+                        if (parsed.prerelease || parsed.draft) {
+                            log.info(`[PatchUpdater] 跳過非正式發布版本: ${parsed.tag_name} (Pre-release/Draft)`);
+                            return resolve(null);
+                        }
                         resolve(parsed);
                     } catch (e) {
                         reject(e);
@@ -158,6 +163,13 @@ class PatchUpdater {
             const zip = new AdmZip(tempZipPath);
             zip.extractAllTo(extractTempPath, true);
 
+            // [v2026.03.17 Pre-flight Check] 結構預檢：防止補丁打包偏移事故 (3/12 Lesson)
+            const expectedSrcPath = path.join(extractTempPath, 'src');
+            if (!fs.existsSync(expectedSrcPath)) {
+                log.error(`[PatchUpdater] 預檢失敗：補丁結構偏移！找不到 /src 目錄。`);
+                throw new Error('補丁目錄結構不正確 (MISSING_SRC_DIR)，更新已中止以保護母體。');
+            }
+            
             // 執行熱更新原子化流程
             log.info(`[PatchUpdater] 進入原子化交換流程...`);
 
@@ -216,6 +228,7 @@ class PatchUpdater {
     }
 
     compareVersions(v1, v2) {
+        // [v2026.03.17] 委託給 versionService 進行精準 Semver 比對
         return versionService.compareVersions(v1, v2);
     }
 }

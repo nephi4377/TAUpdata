@@ -114,4 +114,24 @@
 3.  **推播與標籤**：`git push origin main ; git tag v{VER} ; git push origin v{VER}`
 
 ---
+## 🛠️ 10. 更新判定改進計劃 (2026-03-17 規劃)
+
+根據總監反饋，針對目前「更新判定」可能存在的問題，擬定以下長期改進策略（目前僅作規格規劃）：
+
+### A. 精準版本控制 (Precise Semantic Versioning)
+- **多態比對 (Polymorphic Comparison)**：增加 `git_hash` 或 `build_timestamp` 的比對，確保「版本 A == 版本 A」不僅看 Semver 數字，還比對原始碼特徵。
+- **Release Channel 隔離**：明確區分 `stable` (正式版) 與 `beta` (內部測試) 頻道，防止測試版本誤撥。
+
+### B. 狀態機強化 (Enhanced FSM)
+- **更新階段持久化**：於資料庫或穩定 JSON 中紀錄補丁狀態：「下載中」、「解壓中」、「校驗中」、「重啟中」。
+- **自動回滾升級**：若熱更新重啟後 30 秒內發生崩潰，視為補丁無效，自動觸發 `rollback()` 回滾至 `latest_stable_bak` 並黑名單該版本。
+
+### C. 元數據驗證 (Metadata Signing)
+- **SHA-256 校驗**：下載補丁後，強制與 GitHub Release 描述中的雜湊值比對，防範傳輸損壞。
+- **Base Version 依賴宣告**：補丁內含 `target_base_version`。若目前的 EXE 版本不符合補丁需求，嚴禁套用以防環境不相容。
+
+### D. UI 視覺反饋最佳化
+- **進度可視化**：在統計中心 (Stats Center) 介面增加迷你在線更新計量條，消滅「背景下載，使用者無感」導致的重疊更新疑慮。
+
+---
 *此指南由 AI 助理小添彙補，旨在輔助設計總監進行高品質交付。*

@@ -1,5 +1,5 @@
 # 添心小助手：MASTER_PLAN (核心憲法)
-> v2.5.2 | 里程碑：數據安全補位與權限防禦架構
+> v2.6 | 里程碑：DevOps 聯席與 [全量系統圖 v3.0](file:///c:/Users/a9999/Dropbox/CodeBackups/CODING/SPEC/07_SYSTEM_FLOW_MAP.md) 整合
 
 ## 📋 專案概述
 建立一個透明、非侵入式的生產力監測系統。
