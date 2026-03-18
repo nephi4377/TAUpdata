@@ -41,7 +41,8 @@ class PatchUpdater {
 
             log.info(`[PatchUpdater] 目前版本: ${currentVersion} / 最新版本: ${latestVersion}`);
 
-            if (this.compareVersions(latestVersion, currentVersion) > 0) {
+            const cmp = this.compareVersions(latestVersion, currentVersion);
+            if (cmp > 0) {
                 // [v2.0.8] 檢查黑名單
                 if (versionService.isVersionFailed(latestVersion)) {
                     log.info(`[PatchUpdater] 版本 v${latestVersion} 曾發生過失敗，跳過補丁更新。`);
@@ -68,12 +69,11 @@ class PatchUpdater {
                     await this.downloadAndApplyPatch(patchAsset.browser_download_url, patchAsset.name, latestVersion);
                     return true; // 告知有補丁更新
                 } else {
-                    log.info('[PatchUpdater] 最新 Release 不含 patch.zip，退回全量 autoUpdater');
-                    // 沒有補丁包，交由原版 electron-updater 處理
+                    log.info('[PatchUpdater] 最新 Release 不含 patch.zip，將嘗試全量 autoUpdater 更新檢查');
+                    // 沒有補丁包，且版本較新，此時才交由原版 electron-updater 處理
                     if (!isManual) {
                         try {
-                            autoUpdater.autoDownload = false; // 禁用自動下載以免自帶對話框跳出亂碼
-                            // 自行監聽 update-available 處理 (若無監聽則這裡只先觸發檢查)
+                            autoUpdater.autoDownload = false;
                             autoUpdater.checkForUpdates();
                         } catch (err) {
                             log.error('AutoUpdater check error:', err);
@@ -81,8 +81,9 @@ class PatchUpdater {
                     }
                 }
             } else {
-                log.info('[PatchUpdater] 當前為最新版本');
+                log.info('[PatchUpdater] 當前為最新版本 (或比 GitHub 標籤更高)，不執行任何更新。');
                 if (isManual) this.showNoUpdateDialog();
+                return false; // 明確告知不需更新，防止 fallback
             }
         } catch (error) {
             log.error('[PatchUpdater] 檢查更新異常:', error);

@@ -113,6 +113,11 @@ app.whenReady().then(async () => {
 
             if (app.isPackaged && !isDebug) {
                 console.log('[Launcher] 自動更新已啟動');
+                // [v2.6.403] 啟動防震：延遲 5 秒後執行首次檢查，避免與 UI 初始渲染衝突
+                setTimeout(() => {
+                    patchUpdater.checkForUpdates(false);
+                }, 5000);
+
                 setInterval(() => {
                     patchUpdater.checkForUpdates(false);
                 }, 15 * 60 * 1000);

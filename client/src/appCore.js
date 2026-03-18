@@ -349,14 +349,6 @@ class AppCore {
             this.services.apiBridge.submitTodayReport(storageService, reminderService).catch(e => console.error('[Core] 自動上傳失敗:', e.message));
         }, 60 * 60 * 1000);
 
-        // 每 15 分鐘背景自動檢查一次更新 (v1.11.8+ 新增)
-        this.timers.autoUpdateCheck = setInterval(() => {
-            logger.info('[Core] 執行背景定時更新巡檢 (15min)...');
-            this.patchUpdater.checkForUpdates(false).then(res => {
-                if (!res && app.isPackaged && autoUpdater) autoUpdater.checkForUpdates();
-            });
-        }, 15 * 60 * 1000);
-
         // [v1.13.0] 專家特遣隊：iCloud 全量同步定時器 (30 分鐘)
         this.timers.icloudSync = setInterval(() => {
             console.log('[Core] 執行 30 分鐘 iCloud 雲端同步專家任務...');
