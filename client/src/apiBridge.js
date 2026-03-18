@@ -154,8 +154,14 @@ class ApiBridge {
     }
 
     // [v2.2.8.5] 判斷是否為內部員工 (雙重校驗：姓名 或 UID)
+    // [v2.6.401] 強化寬容比對：自動轉字串以相容 Firebase 傳入型別
     isEmployee(name, uid) {
-        if (uid && this.employeeUids.has(uid)) return true;
+        if (uid) {
+            const searchUid = uid.toString();
+            for (let savedUid of this.employeeUids) {
+                if (savedUid && savedUid.toString() === searchUid) return true;
+            }
+        }
         if (name && this.employeeNames.has(name)) return true;
         return false;
     }

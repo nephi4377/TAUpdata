@@ -255,7 +255,7 @@ class VersionManager {
             if (fs.existsSync(this.patchVersionFile)) {
                 const data = JSON.parse(fs.readFileSync(this.patchVersionFile, 'utf8'));
                 const patchVersion = data.version ? data.version.toString() : null;
-                if (patchVersion && this.compareVersions(patchVersion, baseVersion) > 0) {
+                if (patchVersion && this.compareVersions(patchVersion, baseVersion) >= 0) {
                     return patchVersion;
                 }
             }
