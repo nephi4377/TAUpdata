@@ -108,18 +108,7 @@ class MonitorService {
 
     // 啟動監測
     async start() {
-        // [v1.17.1] iCloud 同步由 AppCore 統一管理，MonitorService 僅負責啟動後的初始同步
-        // 啟動後 5 秒執行首次 iCloud 同步，之後每 30 分鐘同步一次
-        if (this.apiBridge && this.reminderService) {
-            setTimeout(() => {
-                console.log('[Monitor] 執行首次 iCloud 同步...');
-                this.apiBridge.syncAllIcloudReminders(this.reminderService);
-            }, 5000);
-            this._icloudSyncTimer = setInterval(() => {
-                console.log('[Monitor] 執行 30 分鐘 iCloud 定時同步...');
-                this.apiBridge.syncAllIcloudReminders(this.reminderService);
-            }, 30 * 60 * 1000);
-        }
+        // [v26.03.04] iCloud 同步由 AppCore 統一管理（避免重複定時器）
 
         if (this.isRunning) {
             console.log('[Monitor] 監測服務已在執行中');
@@ -1123,6 +1112,16 @@ class MonitorService {
                     logDebug('GLOBAL ERROR: ' + msg + ' at ' + line);
                 };
 
+                function escapeHtml(text) {
+                    if (!text) return '';
+                    return String(text)
+                        .replace(/&/g, '&amp;')
+                        .replace(/</g, '&lt;')
+                        .replace(/>/g, '&gt;')
+                        .replace(/"/g, '&quot;')
+                        .replace(/'/g, '&#039;');
+                }
+
                 // [v2.5.3 KB Search Logic]
                 async function doKBSearch() {
                     const q = document.getElementById('kb-input').value;
@@ -1142,8 +1141,8 @@ class MonitorService {
                         // [v26.03.15] 修復巢狀模板字串轉義錯誤，確保 KB 搜尋結果正確渲染
                         resDiv.innerHTML = results.map(r => \`
                             <div class="kb-item" onclick="this.classList.toggle('expanded')">
-                                <h3>📘 \${r.title}</h3>
-                                <p>\${r.content}</p>
+                                <h3>📘 \${escapeHtml(r.title)}</h3>
+                                <p>\${escapeHtml(r.content)}</p>
                             </div>
                         \`).join('');
                     } catch (err) {
@@ -1335,7 +1334,7 @@ class MonitorService {
                                 const ts = a.duration_formatted || '0分';
                                 rh += '<div class="app-row">';
                                 rh += '<span style="color:#888; font-size:11px; width:25px;">' + (i+1) + '.</span>';
-                                rh += '<span style="flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:13px; color:#5d4037;">' + a.app_name + '</span>';
+                                rh += '<span style="flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:13px; color:#5d4037;">' + escapeHtml(a.app_name) + '</span>';
                                 rh += '<span style="font-weight:bold; color:#d35400; font-size:13px;">' + ts + '</span>';
                                 rh += '</div>';
                             });
@@ -1374,15 +1373,15 @@ class MonitorService {
                                     // 視覺對齊：已完成顯示綠色打勾與文字淡化
                                     if (item.type === 'rem') {
                                         let titleH = '<div style="display:flex; flex-direction:column; gap:2px; flex:1;">';
-                                        titleH += '<span class="task-title" style="' + (isC ? 'color:#94a3b8; text-decoration:line-through;' : '') + '">' + (isC ? '✅' : (item.icon || '⏰')) + ' ' + item.title + '</span>';
+                                        titleH += '<span class="task-title" style="' + (isC ? 'color:#94a3b8; text-decoration:line-through;' : '') + '">' + (isC ? '✅' : (item.icon || '⏰')) + ' ' + escapeHtml(item.title) + '</span>';
                                         if (item.message && !isC) {
-                                            titleH += '<span style="font-size:11px; color:#64748b; margin-left:22px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:280px;" title="'+item.message+'">' + item.message + '</span>';
+                                            titleH += '<span style="font-size:11px; color:#64748b; margin-left:22px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:280px;" title="'+escapeHtml(item.message)+'">' + escapeHtml(item.message) + '</span>';
                                         }
                                         titleH += '</div>';
                                         h += titleH;
                                         h += isC ? '<button class="task-btn done" onclick="undoTask(event,\\''+item.id+'\\')">↺</button>' : '<button class="task-btn" onclick="completeTask(event,\\''+item.id+'\\',\\''+item.title+'\\')">✓</button>';
                                     } else {
-                                        h += '<span class="task-title" style="flex:1; ' + (isC ? 'color:#94a3b8; text-decoration:line-through;' : '') + '">' + (isC ? '✅' : '📌') + ' ' + item.title + '</span>';
+                                        h += '<span class="task-title" style="flex:1; ' + (isC ? 'color:#94a3b8; text-decoration:line-through;' : '') + '">' + (isC ? '✅' : '📌') + ' ' + escapeHtml(item.title) + '</span>';
                                         h += '<button class="task-btn ' + (isC ? 'done' : '') + '" onclick="toggleTask(event,'+item.id+',\\''+(isC?'pending':'completed')+'\\')">' + (isC ? '↺' : '✓') + '</button>';
                                     }
                                     h += '</div>';

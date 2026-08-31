@@ -24,3 +24,15 @@
 - **倉庫防火牆**：嚴格排除 `versions/`, `BAK/`, `node_modules/`。
 - **版本三位一體**：Tag、Release 標題、`package.json` 必須 100% 一致。
 - **CI 容錯**：`build.yml` 必須設定 `HUSKY: 0` 並使用 `npm ci --no-scripts`。
+
+## 📌 版本對照表（SPEC ↔ 程式）
+
+| 來源 | 版本／日期 | 說明 |
+| :--- | :--- | :--- |
+| `client/package.json` | **v2.6.403** | 權威 App 版本 |
+| `PROJECT_CONTEXT.md` | v2.6.403 | 應與 package.json 同步 |
+| `setupWindow.js` 畫面字樣 | v2.5.2.0 | **僅 UI 文案，非發布版本** |
+| `checkin.html` CONSTANTS.VERSION | v26.06.06.1745 | CODING LIFF 頁版本，獨立於桌面 App |
+| 本文件標頭 | v2.6 | SPEC 憲法修訂號，非 App 版號 |
+
+> 發布前檢查：更新 `package.json` → `PROJECT_CONTEXT.md` 頂部版本 → Git Tag。

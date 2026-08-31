@@ -11,10 +11,11 @@
 
 ## 🔄 核心邏輯流程 (SOP)
 
-### 1. 打卡流程 (據點優先、異步強一致性)
+### 1. 打卡流程 (據點優先、本地優先)
 - **定位**：組別含「台南/高雄」套用固定座標；其餘採 IP 定位 (`ipapi.co`)。
-- **同步**：發送 POST 後 **延遲 2.5 秒** 才執行 `refreshWorkInfo`，防止 Google Sheets 寫入延遲。
-- **防禦**：若本地已有打卡紀錄，雲端回傳空值時 **不允許覆寫**。
+- **同步**：打卡成功後 **樂觀寫入本地** 並廣播 UI；**已移除** 打卡後 2.5s／3s 延遲 `refreshWorkInfo`（避免 GAS 寫入延遲造成狀態回彈）。
+- **背景刷新**：`AppCore` 每 **10 分鐘** 僅在 **未打卡** 時呼叫 `get_work_info`；已打卡則略過。
+- **防禦**：若本地已有打卡紀錄，雲端回傳空值時 **不允許覆寫**（`handleWorkInfoUpdate`）。
 
 ### 2. 訊息路由 (三階反查分配機制 - Backend 驅動)
 - **核心架構**: 由 **GAS (Google Apps Script)** 決定路由，Firebase 作為傳遞介面（Postbox），Client 端僅負責監聽。
@@ -82,7 +83,7 @@ graph TD
     - **狀態看板**：顯示當前上班時間、預計下班時間與使用者資訊。
 
 ## 📁 檔案職責與 API
-- **apiBridge.js**：全系統 **唯一通訊出口**。負責 GAS (/api/report)、iCloud (ICS 每 30min)、Firebase RTDB。
+- **apiBridge.js**：全系統 **唯一 GAS 通訊出口**。負責打卡、報表、心跳、**iCloud ICS 同步**（`syncAllIcloudReminders`，由 `AppCore` 每 30min 觸發）、Firebase 相關上報。
 - **reminderService.js**：全系統 **提醒管家 (Reminder Core)**。負責統籌所有來源（iCloud, Firebase, 本地排程）的氣泡彈出、排隊顯示與跨日狀態清算。
     - **智慧雙軌重置機制 (Smart Reset Algorithm - v1.18.7)**:
         - **設計背景**: 解決凌晨時段（00:00-07:00）處理任務後，因日期物理切換導致記錄被抹除的痛點。
@@ -152,7 +153,7 @@ graph TD
 - **防止開機誤報**：數據恢復 (`_restoreTodayStats`) 雖會讀取當日累積總量以保持看板正確，但**不應**將該累積量直接作為警示基準。啟動時，警示計時應從 0 開始，或是僅在連續狀態延續時才累加。
 
             - **自癒通知**：`showToast` 採用 `showInactive` (不搶奪控制權) 且具備 `activityCheckInterval`，偵測到使用者恢復活動即自動消失。
-- **storage.js**：SQLite 事務處理，每小時自動備份。
+- **storage.js**：SQLite 事務處理，變更後 **15 秒** 寫入磁碟（`saveToFile` 防抖）；**非**每小時備份。
 - **firebaseService.js**：全系統 **即時訊息與控制中心 (Realtime Msg Link)**。負責監聽雲端指令與推播訊息。
     - **訊息生命週期與保護邏輯 (Msg Lifecycle)**:
         - **監聽與抓取**: 持續掛載 `.on('child_added')` 監聽。一經下載立即執行 `remove()`，確保 Firebase RTDB 中 **零 Pending**，防止跨裝置重複領取。
@@ -194,7 +195,7 @@ Spike Protection (防膨脹)：自動偵測時鐘突波（如休眠喚醒），�
 4. 雲端同步與系統整合 ( bridge )
 iCloud 行事曆同步：啟動 5s 後首領同步，隨後每 30 分鐘更新。
 iCloud網址: webcal://p52-caldav.icloud.com/published/2/MTM3ODUzOTcxODEzNzg1MxlJYrZiTNUahbeWTuVjJ4-_4RYG-qsSNnxt1_4QT8h4 
-Firebase 在線心跳：每 3 分鐘回報在線狀態。
+Firebase 在線心跳：每 **5 分鐘** 向雲端回報在線狀態與當前應用程式（`monitor.js` `heartbeatInterval`）。
 數據真實化防禦：跨日自動重置、重啟自動恢復當日 DB 數據。
 Mascot 換裝系統：每日隨機更換小秘書服裝（對齊 Config 規範）。
 審計結語：monitor.js 不僅是監控工具，更是具備防禦性、即時反饋與情緒價值的核心組件。
@@ -229,7 +230,7 @@ Mascot 換裝系統：每日隨機更換小秘書服裝（對齊 Config 規範�
 - **規格**：
     - **[DELETE] 管理員中心**：從 `adminDashboard.html` 移除 iCloud 設定面板與相關 IPC 調用。
     - **[NEW] 設定分頁介面**：由 `setupWindow.js` 提供「身分切換」與「同步設定」雙分頁網頁。
-    - **[UX] 燈號連動**：點擊狀態標籤直接導航至設定中心。
+    - **[UX] 燈號連動**：iCloud 狀態標籤為**純顯示**（v26.03.16.0 已移除 `onclick`）；設定改由托盤／管理流程處理，不由燈號導航。
 
 - **規格 (v26.03.16.0)**：
     - **UI 表現**：iCloud 狀態標籤為純顯示元件，已移除 `onclick` 互動。

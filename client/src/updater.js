@@ -8,6 +8,9 @@ const AdmZip = require('adm-zip');
 const os = require('os');
 const { versionService } = require('./versionService');
 
+// [v2.6.404] 徹底防禦：手動檢查時壓制全量更新彈窗的門鎖
+let suppressAutoUpdaterDialogs = false; 
+
 class PatchUpdater {
     constructor() {
         this.repoOwner = 'nephi4377';
@@ -27,7 +30,7 @@ class PatchUpdater {
      * 檢查 GitHub 最新版本並比對目前版本
      */
     async checkForUpdates(isManual = false) {
-        log.info('[PatchUpdater] 開始檢查補丁更新...');
+        log.info(`[PatchUpdater] 開始檢查補丁更新 (Manual: ${isManual})...`);
 
         try {
             const releaseInfo = await this.fetchLatestRelease();
@@ -58,12 +61,16 @@ class PatchUpdater {
                     log.info(`[PatchUpdater] 找到增量補丁檔: ${patchAsset.name}，準備下載解壓...`);
 
                     if (isManual) {
+                        // [v2.6.404] 手動檢查且有補丁時，也鎖死全量彈窗以免重複
+                        suppressAutoUpdaterDialogs = true;
                         dialog.showMessageBox({
                             type: 'info',
                             title: '發現新版本',
                             message: `發現增量補丁 v${latestVersion}，正在背景下載更新...\n下載完成後，視圖會自動刷新套用。`,
                             buttons: ['確定']
                         });
+                        // 30 秒後解除，避免影響後續正常的自動巡檢
+                        setTimeout(() => { suppressAutoUpdaterDialogs = false; }, 30000);
                     }
 
                     await this.downloadAndApplyPatch(patchAsset.browser_download_url, patchAsset.name, latestVersion);
@@ -78,22 +85,26 @@ class PatchUpdater {
                         } catch (err) {
                             log.error('AutoUpdater check error:', err);
                         }
+                    } else {
+                        // [v2.6.404] 手動觸發且無 Patch 時，放行全量更新彈窗
+                        suppressAutoUpdaterDialogs = false;
+                        autoUpdater.checkForUpdates();
                     }
                 }
             } else {
                 log.info('[PatchUpdater] 當前為最新版本 (或比 GitHub 標籤更高)，不執行任何更新。');
-                if (isManual) this.showNoUpdateDialog();
+                if (isManual) {
+                    suppressAutoUpdaterDialogs = true; // 強力鎖死
+                    this.showNoUpdateDialog();
+                    // 30 秒後才解除門鎖，防止 autoUpdater 的慢速回應彈窗
+                    setTimeout(() => { suppressAutoUpdaterDialogs = false; }, 30000);
+                }
                 return false; // 明確告知不需更新，防止 fallback
             }
         } catch (error) {
             log.error('[PatchUpdater] 檢查更新異常:', error);
             if (isManual) {
                 dialog.showErrorBox('檢查更新失敗', `發生網路錯誤或 API 異常：\n${error.message}`);
-            }
-            // 退回全量 autoUpdater
-            if (!isManual) {
-                autoUpdater.autoDownload = false;
-                autoUpdater.checkForUpdates().catch(e => log.error('[AutoUpdater] backoff error:', e));
             }
         }
         return false;
@@ -234,8 +245,16 @@ class PatchUpdater {
     }
 }
 
+const patchUpdater = new PatchUpdater();
+
 // [v1.18.35] 攔截 electron-updater 原生的 HTML Release Note 對話框
 autoUpdater.on('update-available', (info) => {
+    // [v2.6.404] 門鎖：若 PatchUpdater 已判定為最新，則鎖死全量更新提示
+    if (suppressAutoUpdaterDialogs) {
+        log.info('[AutoUpdater] 偵測到全量更新可用，但已被 PatchUpdater 壓制彈窗。');
+        return;
+    }
+
     log.info('[AutoUpdater] 發現全量更新:', info.version);
     const cleanNotes = info.releaseNotes
         ? info.releaseNotes.toString().replace(/<[^>]*>?/gm, '') // 拔除 HTML 標籤
@@ -265,5 +284,5 @@ autoUpdater.on('error', (err) => {
 });
 
 module.exports = {
-    patchUpdater: new PatchUpdater()
+    patchUpdater
 };

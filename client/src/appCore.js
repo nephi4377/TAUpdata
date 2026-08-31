@@ -179,8 +179,7 @@ class AppCore {
             this.checkVersionNotification(versionService);
             this.applyAutoStartSettings();
 
-            // [v1.14.0] 專家級核心定時任務：60s 自動同步全量數據與 UI
-            // [v26.03.01] 核心背景同步：每 60 秒抓取雲端數據並重新渲染 UI
+            // [v26.03.01] 核心背景同步：每 10 分鐘抓取雲端打卡資訊並重新渲染 UI
             this.timers.statsRefresh = setInterval(async () => {
                 console.log('[Core] 執行背景自動刷新 (10min)...');
                 try {
@@ -354,12 +353,6 @@ class AppCore {
             console.log('[Core] 執行 30 分鐘 iCloud 雲端同步專家任務...');
             this.services.apiBridge.syncAllIcloudReminders(this.services.reminderService);
         }, 30 * 60 * 1000);
-
-        // 初始啟動時立即同步一次 (iCloud 優先)
-        setTimeout(() => {
-            console.log('[Core] 初始啟動同步數據庫與雲端行程...');
-            this.services.apiBridge.syncAllIcloudReminders(this.services.reminderService);
-        }, 10000);
 
         // [v1.16.8] 專家級主動推波：每 60 秒強行刷新所有視窗數據，即使視窗在背景也能更新
         this.timers.statBroadcast = setInterval(async () => {
@@ -564,10 +557,7 @@ class AppCore {
             try {
                 const res = await apiBridge.directCheckin(bound.userId, bound.userName);
                 console.log('[Core] 後端打卡結果:', JSON.stringify(res));
-                if (res && res.success) {
-                    const info = await apiBridge.getWorkInfo(bound.userId);
-                    if (info.success) configManager.setTodayWorkInfo(info.data);
-                }
+                // [v26.03.15] 本地優先：directCheckin 已樂觀更新 UI，不再立即拉雲端以免空窗覆寫
                 return res;
             } catch (err) {
                 console.error('[Core] 打卡過程發生異常:', err.message);

@@ -146,7 +146,8 @@ class ApiBridge {
             this.employeeUids.clear();
             result.data.forEach(emp => {
                 if (emp.userName) this.employeeNames.add(emp.userName);
-                if (emp.userId) this.employeeUids.add(emp.userId);
+                const uid = emp.userId || emp.uid;
+                if (uid) this.employeeUids.add(String(uid));
             });
             console.log(`[ApiBridge] 員工快取同步成功: ${this.employeeNames.size} 名稱 / ${this.employeeUids.size} UID`);
         }
@@ -614,14 +615,14 @@ class ApiBridge {
                 const now = new Date();
                 const currentMinutes = now.getHours() * 60 + now.getMinutes();
                 if (currentMinutes >= 15 * 60 + 30) {
-                const tomorrow = new Date(now);
-                tomorrow.setDate(tomorrow.getDate() + 1);
-                const tomorrowStr = this._formatDate(tomorrow);
-                const tomorrowEvents = await this.fetchIcloudEvents(url, tomorrowStr);
-                if (tomorrowEvents && tomorrowEvents.length > 0) {
-                    console.log(`[ApiBridge] 明日預覽：抓取到 ${tomorrowEvents.length} 個明日行程`);
-                    reminderService.updateTomorrowPreview(tomorrowEvents, tomorrowStr);
-                }
+                    const tomorrow = new Date(now);
+                    tomorrow.setDate(tomorrow.getDate() + 1);
+                    const tomorrowStr = this._formatDate(tomorrow);
+                    const tomorrowEvents = await this.fetchIcloudEvents(url, tomorrowStr);
+                    if (tomorrowEvents && tomorrowEvents.length > 0) {
+                        console.log(`[ApiBridge] 明日預覽：抓取到 ${tomorrowEvents.length} 個明日行程`);
+                        reminderService.updateTomorrowPreview(tomorrowEvents, tomorrowStr);
+                    }
                 }
 
                 // [v1.14.0] 燈號同步強化：主動廣播數據更新

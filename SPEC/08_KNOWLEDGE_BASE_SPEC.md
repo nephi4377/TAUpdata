@@ -1,38 +1,48 @@
-# 添心生產力助手：添心知識庫 (KMS) 技術規格草案 (v1.0) <未實作>
-> 目標：打造室內裝修業的「數位大腦」，結合法規查詢、經驗傳承與多人寫作。
+# 添心生產力助手：添心知識庫 (KMS) 技術規格
+> 版本 v1.1 | 2026-07-04 | **Phase 1 已實作**
 
 ## 1. 核心願景
-讓裝修現場的每個經驗（照片、文字、教訓）都能被結構化地儲存，並在設計師遇到疑難雜症時，透過小助手「秒查、秒看、秒學習」。
+讓裝修現場的經驗（法規、施工要點）能在小助手內「秒查、秒看」。
 
-## 2. 系統架構設計
+## 2. 現況（Phase 1 — 已上線）
 
-### A. 數據層 (Data Layer)
-- **文字與索引**：利用現有的 Google Sheets 作為資料庫（新增 `Knowledge_Base` 分頁）。
-    - 欄位：`ID`, `類別`, `標題`, `內容(Markdown/HTML)`, `圖片URL`, `貢獻者`, `最後更新時間`。
-- **多媒體存儲**：
-    - 複用目前的 Firebase Storage 或 Google Drive 接口，用於存放施工實錄照片或法規示意圖。
+### 實作模組
+| 元件 | 路徑 | 職責 |
+| :--- | :--- | :--- |
+| 服務層 | `client/src/kbService.js` | 雲端 CSV 拉取、解析、本地快照、搜尋 |
+| 啟動載入 | `client/src/appCore.js` | 初始化 `KnowledgeBaseService`，背景 `loadKnowledgeBase()` |
+| UI 入口 | `client/src/monitor.js` | 統計中心「🔍 裝修百科」overlay + `doKBSearch()` |
+| IPC | `client/src/reminderPreload.js` | `searchKB` → `appCore` handler |
+| 離線快照 | `client/KNOWLEDGE/kb_snapshot.json` | 雲端失敗時 fallback |
 
-### B. 管理層 (Management Layer)
-- **協同編輯器**：
-    - 在管理員面板（Level 5）或授權清單（Level 3+）中加入「撰寫新文章」功能。
-    - 支援簡單的 Markdown 或 圖文編輯介面。
-- **權限控制**：
-    - **閱讀**：全員（Level 1-5）。
-    - **編寫**：指定對象（設計總監、資深設計師 L3+）。
+### 資料來源
+- **Google Sheets**（公開 CSV export）
+  - 試算表 ID：`1JCkkoW2F0mmZjADeYe1f1jISzWL9vrArCKZB9bn-yOQ`
+  - 分頁 gid：`1333523823`（`KB_Suggestions`）
+  - 欄位：`Status`, `Suggested_Keyword`, `Suggested_Question`, `Suggested_Answer`
+  - 僅 `Status === 'Approved'` 進入搜尋索引
 
-### C. 展示層 (Presentation Layer)
-- **快速查詢入口**：
-    - 在小助手的統計看板側邊加入「🔍 裝修百科」功能。
-- **智能關聯 (Smart Linking)**：
-    - 如果偵測到視窗標題含有特定關鍵字（如：`防火門`、`輕隔間`），小助手主動提示相關法規或以往的施工經驗文章。
+### 搜尋行為
+- 關鍵字比對：標題、內文、關鍵字陣列（不分大小寫）
+- 結果渲染：**HTML escape**（防 XSS）
+- 逾時：雲端拉取 10 秒
 
-## 3. 實作路徑推演 (Roadmap)
-1. **Phase 1: 靜態查詢器** (MVP)
-    - 助理整理現有的「台灣室內裝修施工綱要」轉為資料庫，開啟「唯讀」供全員查詢。
-2. **Phase 2: 社群化編輯**
-    - 開放設計師上傳施工現場照片並附帶一段「避坑心得」，生成一篇有經驗溫度的職人文章。
-3. **Phase 3: AI 深度整合**
-    - 整合 Gemini API，設計師輸入模糊需求（如：天花板高度限制），AI 代為檢索知識庫並產出專業摘要。
+## 3. 未來階段（Phase 2 / 3）
+
+### Phase 2: 社群化編輯
+- 管理員面板或 Level 3+ 撰寫介面
+- 圖文上傳 → Firebase Storage / Drive
+- 審核流程：`Pending` → `Approved`（沿用 Sheets 狀態欄）
+
+### Phase 3: AI 深度整合
+- 視窗標題關鍵字觸發（如「防火門」「輕隔間」）主動提示
+- Gemini 檢索摘要（需後端配額與隱私審查）
+
+## 4. 驗收標準（Phase 1 — 已達）
+- [x] 啟動後背景載入知識庫，失敗不阻斷主程式
+- [x] 統計中心可搜尋並展開條目
+- [x] 離線時可讀上次快照
+- [x] 搜尋結果經 escape，不執行 HTML 注入
 
 ---
-*本規格草案由 添心生產力助手 之 AI 助理彙整。*
+*關聯：`PROJECT_CONTEXT.md` §D、`02_MODULE_MAP.md` apiBridge／monitor 條目*

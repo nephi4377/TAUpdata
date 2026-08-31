@@ -275,9 +275,11 @@ class ConfigManager {
             const decrypted = decrypt(storedHash);
             return inputPassword === decrypted;
         }
-        // Fallback: 首次執行尚未遷移時，比對預設值並遷移
-        if (inputPassword === 'Tx2649819') {
-            this.setAdminPassword('Tx2649819'); // 自動遷移加密
+        // Fallback: 首次執行尚未遷移時，以 SHA-256 比對舊預設密碼（原始碼不存明文）
+        const LEGACY_DEFAULT_PW_SHA256 = 'daeb9d67a7d97879bc1cc29451315c6b3a4baac02b04f8f5483d3f4a400d4def';
+        const inputSha = crypto.createHash('sha256').update(inputPassword).digest('hex');
+        if (inputSha === LEGACY_DEFAULT_PW_SHA256) {
+            this.setAdminPassword(inputPassword);
             return true;
         }
         return false;
