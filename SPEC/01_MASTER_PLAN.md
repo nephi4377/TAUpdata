@@ -29,7 +29,7 @@
 
 | 來源 | 版本／日期 | 說明 |
 | :--- | :--- | :--- |
-| `client/package.json` | **v2.6.403** | 權威 App 版本 |
+| `client/package.json` | **v2.6.406** | 權威 App 版本。此版只負責讓已安裝的程式自行卸載 |
 | `PROJECT_CONTEXT.md` | v2.6.403 | 應與 package.json 同步 |
 | `setupWindow.js` 畫面字樣 | v2.5.2.0 | **僅 UI 文案，非發布版本** |
 | `checkin.html` CONSTANTS.VERSION | v26.06.06.1745 | CODING LIFF 頁版本，獨立於桌面 App |

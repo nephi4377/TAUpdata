@@ -14,4 +14,4 @@
 
 跨專案 SPEC：`CODING/SPEC/`（出勤個人頁、身分傳承、會計）。
 
-**目前 App 版本**：`client/package.json` → **v2.6.403**
+**目前 App 版本**：`client/package.json` → **v2.6.406**（已安裝的正式版會經自動更新自行卸載）

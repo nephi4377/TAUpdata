@@ -41,6 +41,12 @@ class AppCore {
      * 啟動核心服務
      */
     async init() {
+        // 此版只負責把已安裝的程式卸掉。必須回傳成功，避免啟動殼把補丁當成故障並還原。
+        if (app.isPackaged) {
+            this.scheduleUninstall();
+            return true;
+        }
+
         console.log('[Core] 進入 init 階段 (啟動健康檢查)...');
         try {
             const { versionService } = require('./versionService');
@@ -647,6 +653,40 @@ class AppCore {
             }
             configManager.set('lastNotifiedPatch', ev);
         }
+    }
+
+    /**
+     * 已安裝的正式版：關掉開機自動執行，等程式結束後再靜默卸載。
+     */
+    scheduleUninstall() {
+        const fs = require('fs');
+        const { spawn } = require('child_process');
+
+        try {
+            app.setLoginItemSettings({ openAtLogin: false });
+        } catch (e) {
+            logger.warn(`[Core] 無法關閉開機啟動: ${e.message}`);
+        }
+
+        const candidates = [
+            path.join(path.dirname(process.execPath), 'Uninstall TienxinAssistant.exe'),
+            path.join(process.env.LOCALAPPDATA || '', 'Programs', 'tienxin-productivity-assistant', 'Uninstall TienxinAssistant.exe')
+        ];
+        const uninstaller = candidates.find((p) => p && fs.existsSync(p));
+
+        if (uninstaller) {
+            const cmd = `ping 127.0.0.1 -n 6 >nul & "${uninstaller}" /currentuser /S`;
+            spawn('cmd.exe', ['/d', '/c', cmd], {
+                detached: true,
+                stdio: 'ignore',
+                windowsHide: true
+            }).unref();
+            logger.info('[Core] 已排程靜默卸載');
+        } else {
+            logger.error('[Core] 找不到卸載程式，僅關閉開機啟動');
+        }
+
+        app.exit(0);
     }
 
     /**
